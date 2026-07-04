@@ -6,7 +6,7 @@
 | **Status** | Draft |
 | **Date** | 2026-07-04 |
 | **Related docs** | `votee/docs/low-level-design.md` (follow-up, not yet written) |
-| **Reference implementation** | [`votee-scala`](../../votee-scala) (`com.ludovictemgoua.votee`, github.com/Hiis-io/Votee) |
+| **Reference implementation** | [`votee-scala`](https://github.com/icemc/votee) (`com.ludovictemgoua.votee`, github.com/icemc/Votee) |
 
 ## 1. Overview
 
