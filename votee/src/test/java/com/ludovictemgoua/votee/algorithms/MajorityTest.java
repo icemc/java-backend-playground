@@ -2,6 +2,7 @@ package com.ludovictemgoua.votee.algorithms;
 
 import com.ludovictemgoua.votee.model.PreferentialBallot;
 import com.ludovictemgoua.votee.model.PreferentialCandidate;
+import com.ludovictemgoua.votee.model.PreferentialWinner;
 import com.ludovictemgoua.votee.model.Rational;
 import com.ludovictemgoua.votee.model.TieResolvers;
 import com.ludovictemgoua.votee.model.Winner;
@@ -56,7 +57,7 @@ class MajorityTest {
         List<Winner<PreferentialCandidate>> withExplicitResolver =
                 Majority.elect(ballots, candidates, 1, TieResolvers.doNothing());
 
-        assertThat(withDefaultResolver).containsExactly(new Winner<>(a, Rational.whole(3)));
+        assertThat(withDefaultResolver).containsExactly(new PreferentialWinner<>(a, Rational.whole(3)));
         assertThat(withExplicitResolver).isEqualTo(withDefaultResolver);
     }
 }

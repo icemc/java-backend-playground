@@ -2,6 +2,7 @@ package com.ludovictemgoua.votee.algorithms;
 
 import com.ludovictemgoua.votee.model.PreferentialBallot;
 import com.ludovictemgoua.votee.model.PreferentialCandidate;
+import com.ludovictemgoua.votee.model.PreferentialWinner;
 import com.ludovictemgoua.votee.model.Rational;
 import com.ludovictemgoua.votee.model.Winner;
 import com.ludovictemgoua.votee.support.FixtureLoader;
@@ -49,6 +50,22 @@ class ApprovalTest {
 
         List<Winner<PreferentialCandidate>> winners = Approval.elect(ballots, candidates, 1);
 
-        assertThat(winners).containsExactly(new Winner<>(a, Rational.whole(3)));
+        assertThat(winners).containsExactly(new PreferentialWinner<>(a, Rational.whole(3)));
+    }
+
+    @Test
+    void aPreferenceForACandidateNotInTheEligibleListNeverCounts() {
+        List<PreferentialCandidate> candidates = List.of(a, b);
+        List<PreferentialBallot<PreferentialCandidate>> ballots = List.of(
+                PreferentialBallot.of(1, List.of(a, c)),
+                PreferentialBallot.of(2, List.of(a, b))
+        );
+
+        List<Winner<PreferentialCandidate>> winners = Approval.elect(ballots, candidates, candidates.size());
+
+        assertThat(winners).containsExactly(
+                new PreferentialWinner<>(a, Rational.whole(2)),
+                new PreferentialWinner<>(b, Rational.whole(1))
+        );
     }
 }

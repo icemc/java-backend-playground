@@ -24,6 +24,12 @@ public final class Contingent<C extends Candidate, B extends Ballot<C, B>> exten
         Map<C, Rational> scores = new LinkedHashMap<>(countFirstVotes(ballots, candidates));
         List<Map.Entry<C, Rational>> sorted = resolveTies(descending(scores), tieResolver);
 
+        // No candidate received a single eligible first-preference vote (e.g. empty candidates,
+        // empty ballots, or no ballot has an eligible preference) - there is no leader to elect.
+        if (sorted.isEmpty()) {
+            return List.of();
+        }
+
         // Matches the reference implementation exactly: the leader's raw first-preference score is
         // compared against the flat 1/2 constant, not against half of ballots.size(). In practice this
         // means the runoff branch below is only reached when ballot weights are unusually small.
@@ -33,8 +39,9 @@ public final class Contingent<C extends Candidate, B extends Ballot<C, B>> exten
 
         List<C> topTwo = sorted.stream().limit(2).map(Map.Entry::getKey).toList();
         for (B ballot : ballots) {
-            if (!topTwo.contains(ballot.preferences().getFirst())) {
-                ballot.preferences().stream()
+            List<C> preferences = ballot.preferences();
+            if (!preferences.isEmpty() && !topTwo.contains(preferences.getFirst())) {
+                preferences.stream()
                         .filter(topTwo::contains)
                         .findFirst()
                         .ifPresent(candidate -> scores.merge(candidate, ballot.weight(), Rational::add));

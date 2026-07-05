@@ -2,6 +2,7 @@ package com.ludovictemgoua.votee.algorithms;
 
 import com.ludovictemgoua.votee.model.PreferentialBallot;
 import com.ludovictemgoua.votee.model.PreferentialCandidate;
+import com.ludovictemgoua.votee.model.PreferentialWinner;
 import com.ludovictemgoua.votee.model.Rational;
 import com.ludovictemgoua.votee.model.Winner;
 import com.ludovictemgoua.votee.support.FixtureLoader;
@@ -36,7 +37,7 @@ class BaldwinTest {
 
         List<Winner<PreferentialCandidate>> winners = Baldwin.elect(ballots, candidates, 1);
 
-        assertThat(winners).containsExactly(new Winner<>(a, Rational.ZERO));
+        assertThat(winners).containsExactly(new PreferentialWinner<>(a, Rational.ZERO));
     }
 
     @Test
@@ -53,6 +54,6 @@ class BaldwinTest {
         // Round 2 Borda scores among [a, b] (a=3, b=1) eliminate b, leaving a.
         List<Winner<PreferentialCandidate>> winners = Baldwin.elect(ballots, candidates, 1);
 
-        assertThat(winners).containsExactly(new Winner<>(a, Rational.ZERO));
+        assertThat(winners).containsExactly(new PreferentialWinner<>(a, Rational.ZERO));
     }
 }

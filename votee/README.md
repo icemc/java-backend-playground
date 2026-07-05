@@ -128,7 +128,7 @@ List<Winner<PreferentialCandidate>> winners =
 | `Rational` | Exact fraction type (`BigInteger` numerator/denominator, reduced to lowest terms on construction). Used for every vote weight and score so tallies never drift the way floating-point sums can. |
 | `TieResolver<C>` | Strategy for ordering candidates tied on score. Built-in strategies live in `TieResolvers`: `doNothing()` (deterministic, order-preserving), `random()` (shuffle), `reverse()`. |
 | `Election<C, B, W>` / `AbstractPreferentialElection<C, B>` | The algorithm contract, and a base class providing shared helpers (`countFirstVotes`, `countLastVotes`, `resolveTies`) that every algorithm builds on. |
-| `Winner<C>` | A candidate paired with their final score. |
+| `Winner<C>` | Contract for a candidate paired with their final score. Built-in default is `PreferentialWinner`; implement `Winner` directly for a richer result type (rank, margin, district, and so on). |
 
 ## Extending the library
 
@@ -150,6 +150,12 @@ public record RankedBallot(int id, Rational weight, List<Voter> preferences)
 
 Every algorithm is generic over `<C extends Candidate, B extends Ballot<C, B>>`, so `Majority.<Voter, RankedBallot>elect(ballots, voters, seats)` works without any change to the algorithm classes themselves.
 
+`Winner<C>` is a contract for the same reason: the built-in algorithms always hand back `PreferentialWinner` instances (a plain candidate-and-score pair), but nothing forces a caller to work with that shape downstream. Wrap or adapt the result into your own richer type - carrying a rank, a margin, a district, or whatever else your domain needs - by implementing `Winner<C>` directly instead of being limited to the two fields the default record has:
+
+```java
+public record RankedWinner<C extends Candidate>(C candidate, Rational score, int rank) implements Winner<C> {}
+```
+
 ## Known deviations from the Scala reference
 
 Ported behavior generally matches `votee-scala` exactly, but a few places deliberately diverge. Each is called out with a code comment at its call site too:
@@ -157,7 +163,9 @@ Ported behavior generally matches `votee-scala` exactly, but a few places delibe
 - **Ballot generics** use the Curiously Recurring Generic Pattern instead of Scala's higher-kinded self-type, since Java can't express `Ballot[+C <: Candidate, +T[+CC >: C <: Candidate] <: Ballot[CC, T]]` directly.
 - **`Contingent`'s majority check compares the leader's raw score to a flat `1/2`**, not to half of `ballots.size()` (unlike `Majority`/`Coombs`, which do scale it) - this matches the Scala reference exactly, but means the runoff/redistribution branch is effectively unreachable with normal integer ballot weights. Under active review; not yet changed in either implementation.
 - **`ExhaustiveBallot` resolves ties via the given `TieResolver`** at both the elimination and final-winner steps. The Scala reference accepts a `tieResolver` parameter but never actually uses it, deciding both steps by incidental sort order instead. This port intentionally does **not** replicate that specific behavior.
+- **`Approval`/`Veto` only score preferences for candidates in the given eligible list.** The Scala reference doesn't filter by the `candidates` parameter at all, so a ballot preference for a candidate outside that list could otherwise still accumulate votes (and, for `Veto`, could throw off which preference counts as the ballot's "last" choice). This port intentionally does **not** replicate that; a candidate not in the eligible list never scores, and `Veto`'s last-choice check is computed among eligible preferences only.
 - **`Approval`/`Veto` on the ported test fixtures can legitimately tie** (every fixture ballot ranks all candidates, so `Approval` degenerates into a full N-way tie). Which candidate a tie resolves to first differs between Scala's hash-bucket map iteration and Java's insertion-ordered one; the test suite asserts scores, not winner identity, in that case. See the LLD's "Determinism and Tie-Break Ordering" section.
+- **`Contingent` guards against empty input** (no candidates, no ballots, or a ballot with no eligible preference), returning no winner or safely skipping the ballot instead of throwing. The Scala reference has no such guard and would throw on the equivalent input.
 - **`Baldwin`, `Contingent`, `Coombs`, and `ExhaustiveBallot` ignore the `vacancies` parameter**, matching the Scala reference - each of these is structurally a single-winner algorithm.
 - Score accumulators use `LinkedHashMap` (ballot-processing order) rather than relying on hash-bucket order, for reproducible results across runs.
 

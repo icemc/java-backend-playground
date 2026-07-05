@@ -22,13 +22,13 @@ public final class Veto<C extends Candidate, B extends Ballot<C, B>> extends Abs
     public List<Winner<C>> run(List<B> ballots, List<C> candidates, int vacancies, TieResolver<C> tieResolver) {
         Map<C, Rational> scores = new LinkedHashMap<>();
         for (B ballot : ballots) {
-            List<C> preferences = ballot.preferences();
-            for (int i = 0; i < preferences.size(); i++) {
-                // Every preference scores a point except a ballot's last choice, its veto - unless
-                // the ballot only lists one candidate, in which case that candidate isn't vetoed.
-                boolean isVetoed = i == preferences.size() - 1 && preferences.size() > 1;
+            List<C> eligible = ballot.preferences().stream().filter(candidates::contains).toList();
+            for (int i = 0; i < eligible.size(); i++) {
+                // Every eligible preference scores a point except the ballot's last eligible choice,
+                // its veto - unless the ballot only has one eligible candidate, which isn't vetoed.
+                boolean isVetoed = i == eligible.size() - 1 && eligible.size() > 1;
                 if (!isVetoed) {
-                    scores.merge(preferences.get(i), Rational.ONE, Rational::add);
+                    scores.merge(eligible.get(i), Rational.ONE, Rational::add);
                 }
             }
         }

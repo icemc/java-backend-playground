@@ -22,9 +22,9 @@ public final class Approval<C extends Candidate, B extends Ballot<C, B>> extends
     public List<Winner<C>> run(List<B> ballots, List<C> candidates, int vacancies, TieResolver<C> tieResolver) {
         Map<C, Rational> scores = new LinkedHashMap<>();
         for (B ballot : ballots) {
-            for (C candidate : ballot.preferences()) {
-                scores.merge(candidate, ballot.weight(), Rational::add);
-            }
+            ballot.preferences().stream()
+                    .filter(candidates::contains)
+                    .forEach(candidate -> scores.merge(candidate, ballot.weight(), Rational::add));
         }
         List<Map.Entry<C, Rational>> sorted = scores.entrySet().stream()
                 .sorted(Map.Entry.<C, Rational>comparingByValue().reversed())

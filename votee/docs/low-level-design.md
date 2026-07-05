@@ -237,13 +237,23 @@ Design note: Scala expresses the three built-in resolvers as members of `Electio
 
 ### 4.5 Winner
 
+`Winner` is an interface, not a record directly, following the same contract-plus-default-implementation shape as `Candidate`/`PreferentialCandidate` and `Ballot`/`PreferentialBallot`. This was a deliberate revision after initial implementation: a record would have forced every consumer into exactly the (candidate, score) pair, with no way to carry extra fields (rank, margin, district, and so on) without wrapping. As an interface, a consumer can implement `Winner<C>` directly for a richer result type instead.
+
 ```java
-public record Winner<C extends Candidate>(C candidate, Rational score) {
-    public static <C extends Candidate> Winner<C> of(Map.Entry<C, Rational> entry) {
-        return new Winner<>(entry.getKey(), entry.getValue());
+public interface Winner<C extends Candidate> {
+    C candidate();
+    Rational score();
+
+    static <C extends Candidate> Winner<C> of(Map.Entry<C, Rational> entry) {
+        return new PreferentialWinner<>(entry.getKey(), entry.getValue());
     }
 }
+
+public record PreferentialWinner<C extends Candidate>(C candidate, Rational score) implements Winner<C> {
+}
 ```
+
+The built-in algorithms always construct `PreferentialWinner` internally via `Winner.of(...)`; they don't expose a way to plug in a custom `Winner` implementation as the algorithm's own output type. The extensibility here is for consumers who want to adapt or wrap an algorithm's result into their own richer type downstream, not for parameterizing the algorithms themselves over `W`.
 
 ### 4.6 Election and AbstractPreferentialElection
 

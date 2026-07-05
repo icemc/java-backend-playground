@@ -2,6 +2,7 @@ package com.ludovictemgoua.votee.algorithms;
 
 import com.ludovictemgoua.votee.model.PreferentialBallot;
 import com.ludovictemgoua.votee.model.PreferentialCandidate;
+import com.ludovictemgoua.votee.model.PreferentialWinner;
 import com.ludovictemgoua.votee.model.Rational;
 import com.ludovictemgoua.votee.model.Winner;
 import com.ludovictemgoua.votee.support.FixtureLoader;
@@ -58,7 +59,7 @@ class SuperMajorityTest {
         List<Winner<PreferentialCandidate>> winners =
                 SuperMajority.elect(ballots, candidates, 1, Rational.of(3, 4));
 
-        assertThat(winners).containsExactly(new Winner<>(a, Rational.whole(4)));
+        assertThat(winners).containsExactly(new PreferentialWinner<>(a, Rational.whole(4)));
     }
 
     @Test

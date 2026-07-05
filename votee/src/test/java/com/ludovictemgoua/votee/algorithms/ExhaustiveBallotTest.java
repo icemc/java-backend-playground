@@ -2,6 +2,7 @@ package com.ludovictemgoua.votee.algorithms;
 
 import com.ludovictemgoua.votee.model.PreferentialBallot;
 import com.ludovictemgoua.votee.model.PreferentialCandidate;
+import com.ludovictemgoua.votee.model.PreferentialWinner;
 import com.ludovictemgoua.votee.model.Rational;
 import com.ludovictemgoua.votee.model.TieResolvers;
 import com.ludovictemgoua.votee.model.Winner;
@@ -46,7 +47,7 @@ class ExhaustiveBallotTest {
         List<Winner<PreferentialCandidate>> withReverse =
                 ExhaustiveBallot.elect(ballots, candidates, 1, TieResolvers.reverse());
 
-        assertThat(withDoNothing).containsExactly(new Winner<>(b, Rational.whole(2)));
-        assertThat(withReverse).containsExactly(new Winner<>(a, Rational.whole(2)));
+        assertThat(withDoNothing).containsExactly(new PreferentialWinner<>(b, Rational.whole(2)));
+        assertThat(withReverse).containsExactly(new PreferentialWinner<>(a, Rational.whole(2)));
     }
 }

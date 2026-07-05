@@ -1,6 +1,5 @@
 package com.ludovictemgoua.votee.model;
 
-import java.sql.Array;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;

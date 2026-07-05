@@ -2,6 +2,7 @@ package com.ludovictemgoua.votee.algorithms;
 
 import com.ludovictemgoua.votee.model.PreferentialBallot;
 import com.ludovictemgoua.votee.model.PreferentialCandidate;
+import com.ludovictemgoua.votee.model.PreferentialWinner;
 import com.ludovictemgoua.votee.model.Rational;
 import com.ludovictemgoua.votee.model.Winner;
 import com.ludovictemgoua.votee.support.FixtureLoader;
@@ -43,6 +44,37 @@ class ContingentTest {
 
         List<Winner<PreferentialCandidate>> winners = Contingent.elect(ballots, candidates, 1);
 
-        assertThat(winners).containsExactly(new Winner<>(a, Rational.whole(2)));
+        assertThat(winners).containsExactly(new PreferentialWinner<>(a, Rational.whole(2)));
+    }
+
+    @Test
+    void returnsNoWinnerWhenNoCandidateReceivesAnEligibleFirstPreferenceVote() {
+        List<PreferentialCandidate> candidates = List.of();
+        List<PreferentialBallot<PreferentialCandidate>> ballots = List.of();
+
+        List<Winner<PreferentialCandidate>> winners = Contingent.elect(ballots, candidates, 1);
+
+        assertThat(winners).isEmpty();
+    }
+
+    /**
+     * Needs fractional weights: with integer weights any nonzero score already clears the flat 1/2
+     * threshold (see Contingent's own inline comment), short-circuiting before the runoff loop below
+     * ever runs. Keeping every ballot's weight at 1/4 keeps the leader's raw score at or under 1/2, so
+     * this actually reaches the loop - and the empty-preference ballot inside it - unlike a normal
+     * integer-weight scenario would.
+     */
+    @Test
+    void skipsAnEmptyPreferenceBallotDuringTheRunoffInsteadOfThrowing() {
+        List<PreferentialCandidate> candidates = List.of(a, b);
+        List<PreferentialBallot<PreferentialCandidate>> ballots = List.of(
+                new PreferentialBallot<>(1, Rational.of(1, 4), List.of(a)),
+                new PreferentialBallot<>(2, Rational.of(1, 4), List.of(b)),
+                new PreferentialBallot<>(3, Rational.of(1, 4), List.of())
+        );
+
+        List<Winner<PreferentialCandidate>> winners = Contingent.elect(ballots, candidates, 1);
+
+        assertThat(winners).containsExactly(new PreferentialWinner<>(a, Rational.of(1, 4)));
     }
 }

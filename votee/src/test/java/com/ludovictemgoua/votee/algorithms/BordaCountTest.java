@@ -2,6 +2,7 @@ package com.ludovictemgoua.votee.algorithms;
 
 import com.ludovictemgoua.votee.model.PreferentialBallot;
 import com.ludovictemgoua.votee.model.PreferentialCandidate;
+import com.ludovictemgoua.votee.model.PreferentialWinner;
 import com.ludovictemgoua.votee.model.Rational;
 import com.ludovictemgoua.votee.model.Winner;
 import com.ludovictemgoua.votee.support.FixtureLoader;
@@ -37,9 +38,9 @@ class BordaCountTest {
         List<Winner<PreferentialCandidate>> winners = BordaCount.elect(ballots, candidates, 3);
 
         assertThat(winners).containsExactly(
-                new Winner<>(a, Rational.whole(2)),
-                new Winner<>(b, Rational.whole(1)),
-                new Winner<>(c, Rational.whole(0))
+                new PreferentialWinner<>(a, Rational.whole(2)),
+                new PreferentialWinner<>(b, Rational.whole(1)),
+                new PreferentialWinner<>(c, Rational.whole(0))
         );
     }
 
@@ -53,8 +54,8 @@ class BordaCountTest {
         List<Winner<PreferentialCandidate>> winners = BordaCount.elect(ballots, eligibleCandidates, 2);
 
         assertThat(winners).containsExactly(
-                new Winner<>(a, Rational.whole(1)),
-                new Winner<>(c, Rational.whole(0))
+                new PreferentialWinner<>(a, Rational.whole(1)),
+                new PreferentialWinner<>(c, Rational.whole(0))
         );
     }
 }
