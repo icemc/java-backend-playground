@@ -1,0 +1,43 @@
+# votee-scala is its own git repository (cloned from github.com/Hiis-io/Votee) -
+# excluded here to avoid nesting git repos.
+votee-scala/
+
+# Build output
+target/
+build/
+out/
+bin/
+
+# Maven
+.mvn/wrapper/maven-wrapper.jar
+
+# Gradle
+.gradle/
+
+# Compiled class files
+*.class
+
+# Logs
+*.log
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+.factorypath
+nbproject/
+
+# Scala / Metals tooling
+.metals/
+.bloop/
+.bsp/
+.ammonite/
+project/metals.sbt
+project/.bloop/
+
+# OS files
+.DS_Store
+Thumbs.db
