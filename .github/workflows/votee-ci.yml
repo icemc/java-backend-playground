@@ -1,0 +1,27 @@
+name: votee CI
+
+on:
+  push:
+    paths:
+      - 'votee/**'
+      - '.github/workflows/votee-ci.yml'
+  pull_request:
+    paths:
+      - 'votee/**'
+      - '.github/workflows/votee-ci.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Run tests
+        working-directory: votee
+        run: mvn -B test
