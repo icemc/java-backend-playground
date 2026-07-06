@@ -204,6 +204,8 @@ k6 (one script per endpoint, run in isolation) --> imdb-service, results --> Pro
   production query volume.
 - Multi-instance/horizontal scaling of the application tier (the design is cache/observability-ready for
   it, but it isn't exercised here).
+- Swagger/OpenAPI documentation UI: `springdoc-openapi`'s Initializr `versionRange` doesn't yet cover
+  Spring Boot 4.1 (see low-level design §11). Revisit once springdoc ships 4.1 support.
 
 ## 13. References
 
