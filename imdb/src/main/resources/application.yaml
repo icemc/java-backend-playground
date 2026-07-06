@@ -1,3 +1,36 @@
 spring:
   application:
     name: imdb
+  datasource:
+    url: jdbc:postgresql://localhost:5432/imdb
+    username: imdb
+    password: password
+  data:
+    redis:
+      host: localhost
+      port: 6379
+  flyway:
+    enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, prometheus
+  tracing:
+    sampling:
+      probability: 1.0
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          endpoint: http://localhost:4318/v1/traces
+
+six-degrees:
+  side-cap: 4
+  absolute-max-degree: 7
+  fan-out-cap: 200
+  query-timeout-seconds: 2
+
+top-rated:
+  default-min-votes: 1000
