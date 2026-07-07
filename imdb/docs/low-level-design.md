@@ -50,12 +50,15 @@ implementation today, so on its own that's DIP for its own sake. The payoff show
 where every top-level use case a controller depends on is *also* an interface
 (`TitleSearchUseCase`, `TitleDetailUseCase`, `TopRatedUseCase`, `SixDegreesUseCase`), each with a plain
 `*Impl` and - where caching applies - an `infrastructure.cache` decorator implementing the same
-interface, marked `@Primary`:
+interface, marked `@Primary`. These four interfaces (plus `SixDegreesOutcome`, the sealed result type of
+the `SixDegreesUseCase` contract) live in `application.contracts`, separated from their implementations
+in `application` directly - the same "interfaces apart from implementations" convention `domain.repository`
+already uses one layer in:
 
 ```
-TitleSearchUseCase (interface, application)
-  ├─ TitleSearchUseCaseImpl (application)         - plain orchestration, no caching
-  └─ CachingTitleSearchUseCase (infrastructure)    - @Primary, @Cacheable, delegates to the Impl above
+application.contracts.TitleSearchUseCase (interface)
+  ├─ application.TitleSearchUseCaseImpl               - plain orchestration, no caching
+  └─ infrastructure.cache.CachingTitleSearchUseCase    - @Primary, @Cacheable, delegates to the Impl above
 ```
 
 A controller depends on `TitleSearchUseCase` and never learns which one it got. Swapping cache
@@ -138,19 +141,20 @@ imdb/
           exception/
             NotFoundException.java
         application/
-          TitleSearchUseCase.java         # interface
+          contracts/
+            TitleSearchUseCase.java       # interface
+            TitleDetailUseCase.java       # interface
+            TopRatedUseCase.java          # interface
+            SixDegreesUseCase.java        # interface
+            SixDegreesOutcome.java        # sealed result type of the SixDegreesUseCase contract
           TitleSearchUseCaseImpl.java
-          TitleDetailUseCase.java         # interface
           TitleDetailUseCaseImpl.java
-          TopRatedUseCase.java            # interface
           TopRatedUseCaseImpl.java
-          SixDegreesUseCase.java          # interface
           SixDegreesUseCaseImpl.java
           PersonResolutionUseCase.java    # concrete - internal collaborator, not a public seam
           PersonRef.java
           PathStep.java
           SixDegreesResult.java
-          SixDegreesOutcome.java
         infrastructure/
           persistence/
             JdbcTitleRepository.java
@@ -582,6 +586,21 @@ which is the one place `infrastructure` code names a specific implementation cla
 interface - unavoidable, since something has to construct the delegate unambiguously, and it's a
 same-layer (`infrastructure` → `infrastructure`, effectively) reference, not a boundary violation.
 
+**Jackson 3, not Jackson 2**: `CacheConfig` serializes cache values with
+`org.springframework.data.redis.serializer.GenericJacksonJsonRedisSerializer`, not the more commonly
+documented `GenericJackson2JsonRedisSerializer`. Boot 4.1's default Jackson is Jackson 3
+(`tools.jackson.core`/`tools.jackson.databind` - a different Maven groupId and root package than Jackson
+2.x's `com.fasterxml.jackson.*`, not just a version bump), and `spring-boot-starter-webmvc` doesn't pull
+in a Jackson implementation at all by default anymore - `spring-boot-starter-jackson` has to be added
+explicitly (present in `pom.xml`; missing it produces a `NoClassDefFoundError` for Jackson types, not a
+compile error, since nothing in this codebase references Jackson classes directly - Spring's own
+autoconfiguration and `GenericJacksonJsonRedisSerializer` are the only things that touch it). The "2"
+variant fails at runtime with `ClassNotFoundException: com.fasterxml.jackson.databind...` since that
+package genuinely isn't on the classpath. `enableSpringCacheNullValueSupport()` also has to be requested
+explicitly on the Jackson 3 serializer's builder - it was on by default on the old serializer's
+constructor - which matters here since caching a "no path found" result as `null` is deliberate, not
+incidental.
+
 **Load-test interaction** (carried over from the PDD discussion): the `six-degrees` k6 script must draw a
 different, pre-sampled person pair per iteration specifically so it exercises the bidirectional CTE
 instead of just measuring a warm Redis round-trip after the first request - see §8.
@@ -676,12 +695,13 @@ with plain Mockito, no Spring context and no Testcontainers required at all.
 
 The Maven project itself (Java 21, Spring Boot 4.1.0, group `com.ludovictemgoua`, artifact `imdb`) is
 scaffolded and the dependency set below is already in `pom.xml`, generated directly from Initializr with
-no post-generation edits needed:
+one post-generation addition needed (`spring-boot-starter-jackson`, see below):
 
 | Dependency (Initializr label) | Include? | Why |
 |---|---|---|
 | Spring Web | Yes | REST controllers |
 | JDBC API | Yes | `NamedParameterJdbcTemplate` access - **not** Spring Data JDBC, see §3.1 (avoids reintroducing a repository/entity abstraction) |
+| Jackson | Added post-generation | Not selected on Initializr because it wasn't obviously needed - but `spring-boot-starter-webmvc` doesn't transitively pull in a Jackson implementation on Boot 4.1 the way `spring-boot-starter-web` did on Boot 3, so JSON responses and `GenericJacksonJsonRedisSerializer` (§6) both need it added explicitly |
 | PostgreSQL Driver | Yes | Connects to `abanda/imdb-postgresql` |
 | Flyway Migration | Yes | Runs the `V0`/`V1`/`V2` migrations from §3 |
 | Spring Data Redis | Yes | Cache-aside layer, §6 |
