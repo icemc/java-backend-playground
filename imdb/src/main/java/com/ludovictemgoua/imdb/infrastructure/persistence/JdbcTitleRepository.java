@@ -105,7 +105,7 @@ public class JdbcTitleRepository implements TitleRepository {
                     FROM title_basics tb
                     JOIN title_ratings tr ON tr.tconst = tb.tconst
                     WHERE tb.title_type = 'movie'
-                      AND tb.genres::text[] @> ARRAY[:genre]::text[]
+                      AND genres_as_text(tb.genres) @> ARRAY[:genre]::text[]
                       AND tr.num_votes >= :minVotes
                 ),
                 stats AS (SELECT AVG(average_rating) AS mean_rating FROM pool)

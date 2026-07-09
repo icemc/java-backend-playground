@@ -1,0 +1,5 @@
+id,name
+# Empty by default - six-degrees.js falls back to live discovery via the API's own disambiguation
+# responses when this file has no real rows. Populate it from the actual loaded dataset for a
+# larger, more realistic sample (a mix of ordinary and high-degree "hub" actors, LLD §8):
+#   psql -h localhost -U imdb -d imdb -f generate-sampled-people.sql --csv -o sampled-people.csv

@@ -19,6 +19,10 @@ services:
   postgres:
     image: abanda/imdb-postgresql:latest
     container_name: imdb-postgres
+    # Docker's default 64MB /dev/shm is too small once Postgres runs parallel workers or shared
+    # hash/sort operations under real concurrent load - discovered via a k6 run failing 100% of
+    # requests with "could not resize shared memory segment ... No space left on device".
+    shm_size: 256m
     ports:
       - "5432:5432"
     volumes:
@@ -77,6 +81,13 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    # Discovered empirically: abanda/imdb-postgresql keeps bouncing its own listener while the
+    # background import is running (config tuning at startup, and apparent connection blips under
+    # the heavy COPY load), even after the healthcheck has reported healthy once. depends_on only
+    # gates the very first startup attempt, not ongoing availability, so a restart policy - not a
+    # smarter healthcheck - is what actually makes the app recover on its own instead of staying
+    # crashed after one bad-timing connection attempt.
+    restart: on-failure:5
     networks:
       - imdb-net
 
@@ -159,7 +170,7 @@ services:
   # ---------------------------------------------------------------------
 
   tempo:
-    image: grafana/tempo:latest
+    image: grafana/tempo:2.10.7
     container_name: imdb-tempo
     command: -config.file=/etc/tempo.yaml
     volumes:
@@ -180,7 +191,7 @@ services:
     image: grafana/grafana:latest
     container_name: imdb-grafana
     ports:
-      - "3000:3000"
+      - "3001:3000"
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin

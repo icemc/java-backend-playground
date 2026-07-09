@@ -159,8 +159,7 @@ imdb/
           persistence/
             JdbcTitleRepository.java
             JdbcPersonRepository.java
-            JdbcCoStarGraphRepository.java
-            PathStitcher.java            # package-private, JdbcCoStarGraphRepository-only
+            JdbcCoStarGraphRepository.java  # thin wrapper - the actual BFS lives in the DB, §5.2-5.3
           cache/
             CachingTitleSearchUseCase.java
             CachingTitleDetailUseCase.java
@@ -465,91 +464,79 @@ If a `name` matches more than one person, the response is a disambiguation paylo
 error - it's an expected, common case (many people share a name), not a client mistake. `maxDegree` is
 validated to `1..=7` (`400` outside that range).
 
-## 5. Six Degrees: Bidirectional Recursive CTE
+## 5. Six Degrees: Bidirectional BFS as a PL/pgSQL Function
 
 ### 5.1 Why bidirectional, not the naive one-sided walk
 
 A one-sided recursive walk from person A, expanding until person B is found, pays the graph's full
 branching factor for every hop - and this graph has extreme hub nodes (some credited actors have
-thousands of co-stars). Meeting in the middle from both ends roughly squares down the search space
-(`b^(d/2)` instead of `b^d`), and combined with the product's own 7-degree cap, each side only ever needs
-to expand `⌈7/2⌉ = 4` hops. See PDD §9 for the full comparison against precomputed BFS, in-memory BFS, and
-Pruned Landmark Labeling.
+thousands of co-stars; talk-show hosts exceed 8,000). Meeting in the middle from both ends roughly
+squares down the search space (`b^(d/2)` instead of `b^d`), and combined with the product's own 7-degree
+cap, each side only ever needs to expand `⌈7/2⌉ = 4` hops. See PDD §9 for the full comparison against
+precomputed BFS, in-memory BFS, and Pruned Landmark Labeling.
 
-### 5.2 The query, and where it lives
+### 5.2 Why this isn't a single recursive CTE anymore
 
-The bidirectional CTE below is entirely private to `infrastructure.persistence.JdbcCoStarGraphRepository`.
-The `domain.repository.CoStarGraphRepository` interface it implements exposes exactly one method -
-`Optional<GraphPath> findShortestPath(int personA, int personB)` - where `GraphPath(degree, personIds)`
-is already fully resolved into a single ordered chain. Nothing above the JDBC implementation ever sees
-"forward path" or "backward path"; that split is an artifact of *this* algorithm, not a domain concept.
-A future `Neo4jCoStarGraphRepository` (PDD §9's documented alternative) would implement the same interface
-with a Cypher `shortestPath` call and no forward/backward anything, and nothing in `application` or
-`presentation` would need to change.
+The first working version *was* a single bidirectional recursive CTE (each side's frontier expansion
+and cycle check expressed declaratively, path arrays carried through the recursion). It passed review
+and its own unit tests, then failed under real data and load in two distinct ways:
 
-```sql
-WITH RECURSIVE forward(person, depth, path) AS (
-    SELECT :personA::int, 0, ARRAY[:personA::int]
-  UNION ALL
-    SELECT nbr.person_b, f.depth + 1, f.path || nbr.person_b
-    FROM forward f
-    CROSS JOIN LATERAL (
-        SELECT e.person_b
-        FROM co_star_edges e
-        WHERE e.person_a = f.person
-        ORDER BY e.person_b
-        LIMIT :fanOutCap
-    ) nbr
-    WHERE f.depth < :sideCap
-      AND NOT nbr.person_b = ANY(f.path)
-),
-backward(person, depth, path) AS (
-    SELECT :personB::int, 0, ARRAY[:personB::int]
-  UNION ALL
-    SELECT nbr.person_b, b.depth + 1, b.path || nbr.person_b
-    FROM backward b
-    CROSS JOIN LATERAL (
-        SELECT e.person_b
-        FROM co_star_edges e
-        WHERE e.person_a = b.person
-        ORDER BY e.person_b
-        LIMIT :fanOutCap
-    ) nbr
-    WHERE b.depth < :sideCap
-      AND NOT nbr.person_b = ANY(b.path)
-)
-SELECT f.depth + b.depth AS degree, f.path AS forward_path, b.path AS backward_path
-FROM forward f
-JOIN backward b ON b.person = f.person
-WHERE f.depth + b.depth <= :absoluteMaxDegree
-ORDER BY degree ASC
-LIMIT 1;
-```
+1. **Correctness**: fan-out was capped with `ORDER BY person_b LIMIT :fanOutCap`, always keeping the
+   same fixed (lowest-id) subset of a hub's neighbors and silently dropping the rest. If the actual
+   connecting co-star wasn't in that arbitrary subset, the query reported "no path found" (or a longer
+   path) even though a real, shorter path existed. This is a wrong-answer bug, not a slow-answer bug.
+2. **Performance**: cycle prevention only checked that a single path didn't revisit its own history
+   (`NOT nbr.person_b = ANY(path)`) - there was no *shared* visited set. The same node gets rediscovered
+   by many different paths in a small-world co-star graph, and each rediscovery independently
+   re-expanded from that node again. A real hub-to-hub query (two talk-show hosts, ~8,000 co-stars each)
+   took 3+ minutes and spilled to disk with `fanOutCap=200`/`sideCap=4` - and no fan-out cap small enough
+   to avoid that blowup was also large enough to not risk bug 1.
 
-- `:sideCap` = 4 (fixed at `⌈7/2⌉`) and `:absoluteMaxDegree` = 7, both independent of the caller's
-  requested `maxDegree` - see caching rationale in §6. The explicit `WHERE` matters: with `sideCap=4` on
-  each side, the two CTEs can meet at combined depth 8, one more than the product's absolute cap. Without
-  this filter that would surface as a spurious "degree 8" answer; with it, no matching row means
-  `findShortestPath` cleanly returns `Optional.empty()` - a plain empty result, not a value that needs
-  post-hoc clipping.
-- `:fanOutCap` (e.g. 200) bounds how many neighbors a single hub node contributes per hop. This is an
-  explicit, documented approximation: if a node's true shortest-path edge falls outside its top-200
-  neighbors by `person_b` ordering, that path is missed. This is the practical trade-off that makes the
-  hub-blowup problem tractable in plain SQL; it is a config knob (`six-degrees.fan-out-cap`), not a hidden
-  magic number, so it can be tuned or disabled (`LIMIT NULL`-equivalent) if load testing shows it's overly
-  aggressive.
-- A query timeout is set directly on the underlying `JdbcTemplate` inside `JdbcCoStarGraphRepository`'s
-  constructor (no declarative `spring.jdbc.template.query-timeout` property exists in Boot 4.1 - checked
-  against the reference docs directly) as a last-resort circuit breaker on top of the two caps above.
-- The raw query result (`forward_path`/`backward_path` as parallel int arrays) is mapped to a
-  package-private `JdbcCoStarGraphRepository.RawMatch` record, then collapsed by the package-private
-  `PathStitcher.stitch(...)` (same package, same file neighborhood) into the `GraphPath` the interface
-  actually returns - reversing `backward_path` and concatenating, dropping the duplicated meeting node.
-  Both types are invisible outside `infrastructure.persistence`.
-- `personA == personB` is special-cased in `SixDegreesUseCaseImpl` to return degree `0` without calling
-  the repository at all.
+Both bugs share one root cause: a plain recursive CTE has no way to check a candidate node against
+*everything already discovered so far* - only against the single path being extended. Fixing that
+requires genuine iterative state (a real visited set per side), which SQL's `WITH RECURSIVE` can't
+express on its own. The fix keeps this a pure SQL/PL-pgSQL solution (per-endpoint choice - see PDD §9
+for algorithms that mix in Java or a graph database instead) by moving it into a PL/pgSQL function:
+`find_shortest_co_star_path` (`V3__shortest_co_star_path_function.sql`), called from
+`infrastructure.persistence.JdbcCoStarGraphRepository` as a single `SELECT * FROM
+find_shortest_co_star_path(:personA, :personB, :sideCap, :absoluteMaxDegree)`. The
+`domain.repository.CoStarGraphRepository` interface is unchanged - still exactly one method,
+`Optional<GraphPath> findShortestPath(int personA, int personB)` - so this swap was invisible to
+`application` and `presentation`.
 
-### 5.3 Person resolution
+### 5.3 How the function works
+
+- Two `TEMP TABLE`s (`visited_forward`, `visited_backward`, each `(person, parent)`) hold the real,
+  de-duplicated visited set and parent pointer per side - created `IF NOT EXISTS` and `TRUNCATE`d at
+  the start of each call rather than `ON COMMIT DROP`, since a caller that runs the function twice
+  within one open transaction (e.g. a `@Transactional` test) would otherwise hit "relation already
+  exists" on the second call.
+- Each iteration expands whichever side currently has the smaller frontier (the standard
+  bidirectional-BFS optimization), inserting every neighbor *not already visited on that side* - no
+  arbitrary cap, so no real neighbor is ever silently dropped. On a tie, a `v_prefer_forward` flag
+  alternates which side wins, flipped after every tie-driven choice - without this, a plain "prefer
+  forward on ties" rule starves the backward side completely on any non-branching chain (frontier size
+  stays 1 = 1 every iteration), a real bug caught by the `findsTheShortestPathAcrossMultipleHopsOnBoth-
+  SidesOfTheBidirectionalSearch` integration test before this shipped.
+- After each expansion, only the *newly* discovered nodes are checked against the other side's full
+  visited set - the loop exits the instant they intersect, so most real pairs (small-world graph, most
+  people connect within 1-2 hops) resolve almost immediately rather than exploring to `sideCap` on both
+  sides unconditionally.
+- Once a meeting node is found, the path is reconstructed by walking the `parent` pointers from the
+  meeting node back to each root - a plain linear parent-chain walk (not the combinatorial multi-path
+  search above), so a small recursive CTE is the right, cheap tool for that specific step.
+- `:sideCap` = 4 and `:absoluteMaxDegree` = 7 bound the loop exactly as before (§6 for why these are
+  fixed independent of the caller's requested `maxDegree`); `personA == personB` short-circuits inside
+  the function (degree 0, no expansion at all), mirroring the special case `SixDegreesUseCaseImpl`
+  already has above it.
+- A query timeout is still set directly on the underlying `JdbcTemplate` inside
+  `JdbcCoStarGraphRepository`'s constructor (no declarative `spring.jdbc.template.query-timeout`
+  property exists in Boot 4.1) as a last-resort circuit breaker, though early termination on
+  intersection means it's rarely exercised in practice now.
+- Verified against the exact pathological pair that broke the old query (two ~8,000-co-star hub nodes,
+  no direct edge): 29-44ms and a correct degree-2 result, versus 3+ minutes and a disk spill before.
+
+### 5.4 Person resolution
 
 `PersonResolutionUseCase` (application layer, an internal collaborator of `SixDegreesUseCaseImpl` - see
 §2.1) resolves a `name` query against `name_basics` via the trigram index from §3.2, through the
@@ -718,20 +705,50 @@ one post-generation addition needed (`spring-boot-starter-jackson`, see below):
 | Zipkin | No | Redundant trace backend - traces already go via OpenTelemetry/OTLP to Tempo |
 | otlp-metrics | No | Redundant metrics path - metrics already go via Prometheus pull-scrape |
 
-Remaining work:
+Done, verified against a real running stack (not just written and assumed correct):
 
-- Write the multi-stage `Dockerfile` (Maven build stage -> JRE runtime stage) referenced by
-  `docker-compose.yaml`'s `imdb-service.build`.
-- Author the actual Grafana dashboard JSON models under `observability/grafana/provisioning/dashboards/json/`.
-- Author the k6 scripts and the sampled-actor CSV under `imdb/k6/`.
-- Write the test suite described in §10 - unit tests, decorator tests, integration tests, controller
-  tests - none of it exists yet.
+- **`Dockerfile`**: multi-stage build (Maven build stage -> JRE runtime stage), confirmed with a real
+  `docker build` (549MB final image, no errors).
+- **Test suite** (§10): all 50 tests (unit, decorator, integration, controller) written and passing.
+- **Grafana dashboards** under `observability/grafana/provisioning/dashboards/json/` - four dashboards
+  (HTTP overview, six-degrees latency breakdown, cache hit ratio, k6 load-test results), confirmed by
+  actually bringing up Grafana and checking the provisioned dashboards via its API (`/api/search`,
+  `/api/dashboards/uid/...`) rather than trusting hand-written JSON to be schema-correct. The cache
+  hit-ratio dashboard's `cache_gets_total`/`cache_puts_total` metric names come from Spring Boot's
+  documented auto-binding of cache metrics for `RedisCacheManager` - flagged in the dashboard's own
+  description to double check against a real scrape once the app has served traffic, since this wasn't
+  directly observed (see the next item for why).
+- **k6 scripts and `data/sampled-people.csv`** under `imdb/k6/` - `title-detail.js` and `six-degrees.js`
+  discover real ids/people from the live API at `setup()` time rather than shipping a
+  dataset-snapshot-specific list of hardcoded ids (a first attempt at hardcoding a few "well-known" real
+  IMDb ids for the CSV turned out to be exactly the kind of unverified claim worth avoiding - see
+  `data/generate-sampled-people.sql` for how to build a proper large sample once real data is loaded).
+  Syntax and control flow verified with real `k6 run` invocations (the setup functions' own error
+  messages fired exactly as designed against no server).
+- **Two real bugs surfaced by actually running the stack, not by review**:
+  1. `abanda/imdb-postgresql` keeps bouncing its own Postgres listener throughout the entire ~20-30 minute
+     background import (config tuning at startup, and further blips under the heavy `COPY` load) - well
+     after the container healthcheck has reported healthy once. `depends_on: condition: service_healthy`
+     only gates the *first* startup attempt, not ongoing availability. Fixed at the right layer - Flyway's
+     own `connect-retries`/`connect-retries-interval` (§ above, `application.yaml`) so the connection
+     attempt itself retries for up to 30 minutes, rather than the whole Spring context failing once and
+     needing an external restart.
+  2. `imdb-service` had no restart policy at all in `docker-compose.yaml`; added `restart: on-failure:5`
+     as a second line of defense on top of the Flyway fix, so a genuinely bad startup still self-heals
+     instead of sitting crashed until someone notices.
+
+Still open - these need the real, fully-imported dataset, which takes 20-30 minutes and is a deliberate
+choice to run, not something to trigger incidentally:
+
 - Pick the concrete `minVotes` default for the weighted-rating formula from the real vote-count
   distribution once the dataset is loaded (PDD §11).
-- Tune `fanOutCap` and `sideCap` in §5.2 against real k6 results; both are exposed as configuration, not
-  hardcoded, specifically so this tuning doesn't require a code change.
+- Tune `sideCap` in §5.3 against real k6 results if it's ever found to be too conservative or too
+  loose - `fanOutCap` no longer exists (§5.2: the BFS rewrite has a real visited set, so it never needs
+  to arbitrarily drop neighbors to bound the search).
 - Decide the `co_star_edges` refresh cadence (PDD §11 open question) if this ever moves beyond a
   single-import deployment.
+- Confirm the `cache_gets_total`/`cache_puts_total` metric names above against a real scrape once the app
+  has actually served cached traffic.
 - The onion layering in §2 is enforced today only by convention (import direction) and code review, not
   by a build-tool boundary. If this project grows past its current size, splitting `domain`/`application`/
   `infrastructure`/`presentation` into separate Maven modules would make the dependency rule

@@ -5,12 +5,32 @@ spring:
     url: jdbc:postgresql://localhost:5432/imdb
     username: imdb
     password: password
+    hikari:
+      # Default (10) was completely swamped by k6's 100-VU search load test - HikariPool logs showed
+      # total=10, active=10, idle=0, waiting=46, cascading into 30s connection-acquisition timeouts.
+      # 30 gives real headroom under concurrent load while staying well under Postgres's
+      # max_connections=100 (leaves room for postgres-exporter and manual/admin connections).
+      maximum-pool-size: 30
   data:
     redis:
       host: localhost
       port: 6379
   flyway:
     enabled: true
+    # abanda/imdb-postgresql keeps bouncing its own listener throughout the (up to 30 minute)
+    # background data import, well after the container's healthcheck first reports healthy -
+    # discovered empirically while bringing this stack up. Flyway's own retry loop rides out those
+    # gaps directly instead of the whole application failing to start on an unlucky first attempt.
+    connect-retries: 180
+    connect-retries-interval: 10s
+    # abanda/imdb-postgresql's own init.sh populates the `public` schema (name_basics, title_basics,
+    # etc.) via raw psql/imdblib, entirely outside Flyway - so on a freshly imported database Flyway
+    # sees a non-empty schema with no history table and refuses to proceed. baseline-version: 0 tells
+    # it to treat V0 (the CREATE TABLE IF NOT EXISTS base schema, already satisfied by imdblib's
+    # tables) as the starting point, and only apply V1/V2 on top. Has no effect on the empty schema
+    # Testcontainers spins up for integration tests - Flyway just runs V0-V2 there as normal.
+    baseline-on-migrate: true
+    baseline-version: 0
 
 management:
   endpoints:
@@ -25,11 +45,26 @@ management:
       export:
         otlp:
           endpoint: http://localhost:4318/v1/traces
+  # Adding the "OpenTelemetry" Initializr module also auto-configures a push-based OTLP metrics
+  # exporter (defaulting to localhost:4318/v1/metrics, which inside a container doesn't resolve to
+  # anything useful) - discovered from a live ConnectException in the logs. Metrics were always meant
+  # to go via Prometheus pull-scrape only (LLD dependency table, `/actuator/prometheus`), not push, so
+  # this second unwanted exporter is disabled outright rather than pointed anywhere. Note the
+  # inconsistent Boot 4.1 property namespace: metrics kept "management.otlp.*" while tracing moved to
+  # "management.opentelemetry.tracing.*" above - confirmed against OtlpMetricsProperties directly, not
+  # guessed, since the two don't mirror each other.
+  otlp:
+    metrics:
+      export:
+        enabled: false
 
 six-degrees:
   side-cap: 4
   absolute-max-degree: 7
-  fan-out-cap: 200
+  # fan-out-cap removed: the V3 find_shortest_co_star_path function does a real BFS with a genuine
+  # visited set, so it never needs to arbitrarily drop neighbors to bound the search - it expands
+  # every unvisited neighbor of the current frontier, which is what fixed a real bug (the old
+  # capped-and-ordered fan-out could silently miss the true shortest path).
   query-timeout-seconds: 2
 
 top-rated:

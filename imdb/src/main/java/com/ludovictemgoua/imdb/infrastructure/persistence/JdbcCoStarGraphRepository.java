@@ -8,6 +8,7 @@ import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import javax.sql.DataSource;
 import java.sql.Array;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -20,88 +21,49 @@ public class JdbcCoStarGraphRepository implements CoStarGraphRepository {
 
     private final NamedParameterJdbcTemplate jdbc;
     private final int sideCap;
-    private final int fanOutCap;
     private final int absoluteMaxDegree;
 
     public JdbcCoStarGraphRepository(
-            NamedParameterJdbcTemplate jdbc,
+            DataSource dataSource,
             @Value("${six-degrees.side-cap}") int sideCap,
-            @Value("${six-degrees.fan-out-cap}") int fanOutCap,
             @Value("${six-degrees.absolute-max-degree}") int absoluteMaxDegree,
             @Value("${six-degrees.query-timeout-seconds}") int queryTimeoutSeconds) {
-        this.jdbc = jdbc;
+        // A dedicated JdbcTemplate over the same DataSource/connection pool, not the app's shared
+        // auto-configured NamedParameterJdbcTemplate bean - setQueryTimeout mutates the JdbcTemplate
+        // instance itself, and Spring only creates one shared instance of that bean by default, so
+        // setting the timeout there was leaking this query's tight timeout onto every other
+        // repository's queries (discovered when a plain title search got cancelled by this six-degrees-
+        // specific timeout). Only this query gets a tight timeout - it's the one query in the whole app
+        // whose cost depends on graph shape (hub actors) rather than a bounded index lookup. There's no
+        // `spring.jdbc.template.query-timeout` property to set this declaratively (Boot 4.1 doesn't have
+        // one), so it's set directly on this repository's own JdbcTemplate instead.
+        JdbcTemplate template = new JdbcTemplate(dataSource);
+        template.setQueryTimeout(queryTimeoutSeconds);
+        this.jdbc = new NamedParameterJdbcTemplate(template);
         this.sideCap = sideCap;
-        this.fanOutCap = fanOutCap;
         this.absoluteMaxDegree = absoluteMaxDegree;
-        // Only this query gets a tight timeout - it's the one query in the whole app whose cost
-        // depends on graph shape (hub actors) rather than a bounded index lookup. There's no
-        // `spring.jdbc.template.query-timeout` property to set this declaratively (Boot 4.1 doesn't
-        // have one), so it's set directly on the underlying JdbcTemplate instead.
-        ((JdbcTemplate) jdbc.getJdbcOperations()).setQueryTimeout(queryTimeoutSeconds);
     }
 
     @Override
     public Optional<GraphPath> findShortestPath(int personA, int personB) {
-        String sql = """
-                WITH RECURSIVE forward(person, depth, path) AS (
-                    SELECT :personA, 0, ARRAY[:personA]
-                  UNION ALL
-                    SELECT nbr.person_b, f.depth + 1, f.path || nbr.person_b
-                    FROM forward f
-                    CROSS JOIN LATERAL (
-                        SELECT e.person_b
-                        FROM co_star_edges e
-                        WHERE e.person_a = f.person
-                        ORDER BY e.person_b
-                        LIMIT :fanOutCap
-                    ) nbr
-                    WHERE f.depth < :sideCap
-                      AND NOT nbr.person_b = ANY(f.path)
-                ),
-                backward(person, depth, path) AS (
-                    SELECT :personB, 0, ARRAY[:personB]
-                  UNION ALL
-                    SELECT nbr.person_b, b.depth + 1, b.path || nbr.person_b
-                    FROM backward b
-                    CROSS JOIN LATERAL (
-                        SELECT e.person_b
-                        FROM co_star_edges e
-                        WHERE e.person_a = b.person
-                        ORDER BY e.person_b
-                        LIMIT :fanOutCap
-                    ) nbr
-                    WHERE b.depth < :sideCap
-                      AND NOT nbr.person_b = ANY(b.path)
-                )
-                SELECT f.depth + b.depth AS degree, f.path AS forward_path, b.path AS backward_path
-                FROM forward f
-                JOIN backward b ON b.person = f.person
-                WHERE f.depth + b.depth <= :absoluteMaxDegree
-                ORDER BY degree ASC
-                LIMIT 1
-                """;
+        // The actual bidirectional-BFS logic lives entirely in the find_shortest_co_star_path SQL
+        // function (V3 migration) - a real level-synchronized BFS with a genuine per-side visited
+        // set, replacing an earlier single-statement recursive CTE that had no visited set (only
+        // per-path cycle checks) and capped fan-out with an arbitrary ORDER BY that could silently
+        // drop the true shortest path. See the V3 migration for the full rationale.
+        String sql = "SELECT * FROM find_shortest_co_star_path(:personA, :personB, :sideCap, :absoluteMaxDegree)";
         var params = new MapSqlParameterSource()
                 .addValue("personA", personA).addValue("personB", personB)
-                .addValue("sideCap", sideCap).addValue("fanOutCap", fanOutCap)
-                .addValue("absoluteMaxDegree", absoluteMaxDegree);
+                .addValue("sideCap", sideCap).addValue("absoluteMaxDegree", absoluteMaxDegree);
 
-        return jdbc.query(sql, params, JdbcCoStarGraphRepository::mapRawMatch).stream()
-                .findFirst()
-                .map(PathStitcher::stitch);
+        return jdbc.query(sql, params, JdbcCoStarGraphRepository::mapGraphPath).stream().findFirst();
     }
 
-    private static RawMatch mapRawMatch(ResultSet rs, int rowNum) throws SQLException {
-        return new RawMatch(rs.getInt("degree"),
-                toIntList(rs.getArray("forward_path")), toIntList(rs.getArray("backward_path")));
+    private static GraphPath mapGraphPath(ResultSet rs, int rowNum) throws SQLException {
+        return new GraphPath(rs.getInt("result_degree"), toIntList(rs.getArray("result_path")));
     }
 
     private static List<Integer> toIntList(Array sqlArray) throws SQLException {
         return Arrays.asList((Integer[]) sqlArray.getArray());
-    }
-
-    // Package-private: the forward/backward split is an artifact of this one bidirectional-CTE
-    // implementation, not a domain concept. PathStitcher (same package) collapses it into the clean
-    // GraphPath the CoStarGraphRepository interface actually promises.
-    record RawMatch(int degree, List<Integer> forwardPath, List<Integer> backwardPath) {
     }
 }
