@@ -1,0 +1,11 @@
+-- findAnyCommonTitle (JdbcTitleRepository - used once per hop to enrich a six-degrees path with the
+-- shared title connecting each pair) filters title_principals by nconst with no category
+-- restriction, but the only existing nconst index (idx_title_principals_nconst_acting, V1) is
+-- partial - WHERE category IN ('actor', 'actress', 'self') - so it can't be used here. Confirmed via
+-- EXPLAIN ANALYZE: without this index, the planner falls back to a Parallel Seq Scan over the
+-- 100M-row table, over 1 second per call even with parallel workers helping. Under real k6 load
+-- (50 concurrent six-degrees requests, each needing up to 7 of these calls to build a full path),
+-- this alone drove Postgres CPU past 1500% and produced an 83% failure rate against the endpoint's
+-- 2-second query timeout - not the bidirectional BFS function, which tested fast in isolation the
+-- whole time.
+CREATE INDEX idx_title_principals_nconst ON title_principals (nconst);

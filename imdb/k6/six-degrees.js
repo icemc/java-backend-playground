@@ -12,13 +12,20 @@ const SEED_QUERIES = [
   'James Smith', 'John Davis', 'Robert Miller', 'Michael Brown', 'John Miller',
 ];
 
-function loadFromCsv() {
-  let csv;
-  try {
-    csv = open('./data/sampled-people.csv');
-  } catch (e) {
-    return [];
-  }
+// open() must be called from k6's init context (top-level script scope, executed once when the
+// script is parsed) - calling it from inside a function invoked during setup() throws "open() can
+// only be called in the init context", silently caught by the try/catch below and falling through
+// to the slow HTTP-based SEED_QUERIES discovery every single run, undetected until a real load
+// test's setup() timed out after 60s despite a valid, populated CSV sitting right there.
+let rawCsv = null;
+try {
+  rawCsv = open('./data/sampled-people.csv');
+} catch (e) {
+  rawCsv = null;
+}
+
+function parseCsv(csv) {
+  if (!csv) return [];
   return csv
     .split('\n')
     .slice(1) // header
@@ -36,7 +43,7 @@ function loadFromCsv() {
 // person ids live from the API's own disambiguation responses when no CSV has been populated yet,
 // so this script still runs meaningfully against a freshly-seeded database with zero setup.
 export function setup() {
-  const fromCsv = loadFromCsv();
+  const fromCsv = parseCsv(rawCsv);
   if (fromCsv.length >= 2) {
     return { people: fromCsv };
   }

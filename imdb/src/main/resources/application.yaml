@@ -65,6 +65,14 @@ six-degrees:
   # visited set, so it never needs to arbitrarily drop neighbors to bound the search - it expands
   # every unvisited neighbor of the current frontier, which is what fixed a real bug (the old
   # capped-and-ordered fan-out could silently miss the true shortest path).
+  # Tried raising this to 5 after fixing the missing title_principals.nconst index (V4) - did not
+  # help: the ~25-30% failure rate under k6 load stayed essentially the same, it just made each
+  # failing request wait 5s instead of 2s before erroring. That rules out "just needs a bit more
+  # time" - there's a persistent population of genuinely hard pairs (likely: search reaches a large
+  # hub partway through expansion with no intersection yet, and processing that hub's full neighbor
+  # set for one level is itself expensive) that needs its own investigation, tracked as a follow-up
+  # rather than solved by this knob. Reverted to 2 - failing fast is better than failing slow when
+  # the timeout isn't fixing the underlying issue either way.
   query-timeout-seconds: 2
 
 top-rated:
