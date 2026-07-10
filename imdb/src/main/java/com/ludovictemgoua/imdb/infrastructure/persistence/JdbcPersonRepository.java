@@ -3,6 +3,8 @@ package com.ludovictemgoua.imdb.infrastructure.persistence;
 import com.ludovictemgoua.imdb.domain.model.PersonCandidate;
 import com.ludovictemgoua.imdb.domain.repository.PersonRepository;
 import com.ludovictemgoua.imdb.utils.ImdbIds;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -20,6 +22,8 @@ import java.util.stream.Collectors;
 @Repository
 public class JdbcPersonRepository implements PersonRepository {
 
+    private static final Logger log = LoggerFactory.getLogger(JdbcPersonRepository.class);
+
     private final NamedParameterJdbcTemplate jdbc;
 
     public JdbcPersonRepository(NamedParameterJdbcTemplate jdbc) {
@@ -35,7 +39,9 @@ public class JdbcPersonRepository implements PersonRepository {
                 ORDER BY similarity(primary_name, :name) DESC
                 LIMIT 10
                 """;
-        return jdbc.query(sql, Map.of("name", name), JdbcPersonRepository::mapCandidate);
+        List<PersonCandidate> candidates = jdbc.query(sql, Map.of("name", name), JdbcPersonRepository::mapCandidate);
+        log.debug("person lookup: name={} candidateCount={}", name, candidates.size());
+        return candidates;
     }
 
     @Override

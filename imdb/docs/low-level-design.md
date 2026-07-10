@@ -34,11 +34,11 @@ alone (no build-tool module boundaries yet - see the open item in §11):
 
 | Layer | May import | Contains |
 |---|---|---|
-| `presentation` | `application`, `infrastructure`, `domain`, `utils` | Controllers, request validation, `ApiExceptionHandler` |
+| `presentation` | `application`, `infrastructure`, `domain`, `utils` | Controllers, request validation, `ApiExceptionHandler`, `RequestLoggingFilter` |
 | `infrastructure` | `application`, `domain`, `utils` | JDBC repository implementations, Redis caching decorators, Spring `@Configuration` |
 | `application` | `domain`, `utils` | Use-case interfaces + implementations, use-case-specific result types |
 | `domain` | *(nothing)* | Entities/value objects, repository **interfaces**, domain exceptions |
-| `utils` | *(nothing)* | `ImdbIds` - pure, framework-free helpers |
+| `utils` | *(nothing)* | `ImdbIds`, `HeaderSanitizer` - pure, framework-free helpers |
 
 Never: `domain` importing `application`/`infrastructure`; `application` importing `infrastructure`. The
 second rule is the one that actually matters day to day - application code calls domain interfaces only,
@@ -120,6 +120,7 @@ imdb/
         ImdbApplication.java
         utils/
           ImdbIds.java
+          HeaderSanitizer.java             # redacts sensitive headers before logging (§7)
         domain/
           model/
             TitleSummary.java
@@ -171,12 +172,17 @@ imdb/
           GenreController.java
           PersonController.java
           ApiExceptionHandler.java
+          RequestLoggingFilter.java        # request id + sanitized request/response logging (§7)
       resources/
         application.yaml
         db/migration/
           V0__base_schema.sql
           V1__extensions_and_search_indexes.sql
           V2__co_star_edges_materialized_view.sql
+          V3__shortest_co_star_path_function.sql  # find_shortest_co_star_path PL/pgSQL BFS, §5.2-5.3
+          V4__title_principals_nconst_index.sql   # full nconst index - findAnyCommonTitle needs it
+                                                   # across all categories, not just the partial
+                                                   # acting-only index V1 created
     test/
       java/com/ludovictemgoua/imdb/
         (unit tests against domain interfaces, controller tests, Testcontainers integration tests - §10)
@@ -604,10 +610,42 @@ instead of just measuring a warm Redis round-trip after the first request - see 
   - note this property lives under `management.opentelemetry.*`, not the old `management.otlp.*`
   namespace, matching `docker-compose.yaml`. `management.tracing.sampling.probability=1.0` for this
   exercise (full sampling; would be tuned down in a real production deployment under real traffic volume).
-- **Logging**: structured JSON via Spring Boot's built-in structured logging support, trace/span IDs
-  included automatically via Micrometer Tracing's MDC integration, shipped to Loki via Grafana Alloy
-  (already wired in `docker-compose.yaml` / `observability/alloy/config.alloy`) - no application-side
-  logging-shipper dependency needed.
+- **Logging**: structured JSON via Spring Boot 4.1's native structured logging (`logging.structured.
+  format.console: logstash` - confirmed present directly in the spring-boot-4.1.0 jar,
+  `org.springframework.boot.logging.structured.*`; no `logstash-logback-encoder` or other dependency
+  needed), shipped to Loki via Grafana Alloy (already wired in `docker-compose.yaml` /
+  `observability/alloy/config.alloy`). "logstash" format chosen over the built-in ECS/GELF
+  alternatives since it's schema-agnostic and Loki doesn't care about a specific schema, unlike ECS
+  (Elastic-specific) or GELF (Graylog-specific).
+  - **Correlation IDs**: every MDC entry is automatically included in each JSON line, which is what
+    carries two independent identifiers with no per-log-statement wiring: `traceId`/`spanId` (already
+    populated by Micrometer Tracing whenever a span is active) and `requestId` - a dedicated id
+    assigned by `presentation.RequestLoggingFilter`, deliberately independent of tracing so it stays a
+    reliable per-request identifier even if trace sampling is later turned down from today's 100%
+    (`management.tracing.sampling.probability`). The filter honors an incoming `X-Request-Id` header
+    if the caller already generated one, otherwise generates a UUID; echoes it back as a response
+    header; and clears it from MDC in a `finally` block so it can't leak onto the next request handled
+    by the same pooled thread. Runs at `Ordered.HIGHEST_PRECEDENCE` so the id is set as early as
+    possible in the chain.
+  - **Sanitizer**: `utils.HeaderSanitizer` redacts a deny-list (`Authorization`, `Cookie`,
+    `Set-Cookie`, `X-Api-Key`) before `RequestLoggingFilter` logs request headers. This API has no
+    auth today, so nothing sensitive flows through yet - the point is that logging is already correct
+    the moment auth (or any header carrying a secret) is added, not something to retrofit later.
+    Framework-agnostic by design (operates on a plain `Map<String, String>`, not
+    `HttpServletRequest`) so it stays usable from `utils` without pulling in the Servlet API.
+  - **Level policy** (`logging.level.com.ludovictemgoua.imdb`, default `INFO`, overridable per
+    environment via the standard `LOGGING_LEVEL_COM_LUDOVICTEMGOUA_IMDB` env var with no code change):
+    INFO for request start/end (`RequestLoggingFilter`) and business-significant outcomes worth their
+    own line beyond the request summary (`SixDegreesUseCaseImpl` - person-resolution ambiguity, and
+    the computed degree/timing, since this is the one use case with real, previously-invisible
+    performance variance all session); DEBUG for query params/row counts in
+    `infrastructure.persistence` and cache-miss events in `infrastructure.cache` (`@Cacheable` only
+    invokes the annotated method on a miss, so a log statement inside it is inherently a miss signal -
+    aggregate hit ratio is already tracked via Micrometer's cache metrics, the Cache Hit Ratio
+    dashboard); WARN for `find_shortest_co_star_path` calls over 1 second
+    (`JdbcCoStarGraphRepository`); DEBUG for expected 4xx conditions and ERROR (with the full
+    exception) for anything unhandled reaching `ApiExceptionHandler`'s catch-all, so an unexpected
+    failure is never silently reduced to a bare 500 with no trace of the real cause.
 - **Correlation**: `observability/grafana/provisioning/datasources/datasources.yml` already wires
   Loki-derived-fields -> Tempo and Tempo -> Loki/Prometheus, so a trace opened in Grafana click-throughs to
   its log lines and vice versa.

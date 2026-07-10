@@ -77,3 +77,22 @@ six-degrees:
 
 top-rated:
   default-min-votes: 1000
+
+logging:
+  structured:
+    format:
+      # Boot 4.1's native structured logging (org.springframework.boot.logging.structured, verified
+      # directly in the spring-boot-4.1.0 jar) - no logstash-logback-encoder or other dependency
+      # needed. "logstash" is a plain, schema-agnostic flat JSON shape (timestamp/level/logger/
+      # message + all MDC entries) - the right choice for Loki, which doesn't care about a specific
+      # schema, unlike ECS (Elastic-specific) or GELF (Graylog-specific). MDC entries - traceId/
+      # spanId (already populated by Micrometer Tracing) and requestId (RequestLoggingFilter,
+      # presentation layer) - are included in every line automatically, no per-log-statement wiring.
+      console: logstash
+  level:
+    root: INFO
+    # Overridable per-environment via the standard Spring Boot env var
+    # (LOGGING_LEVEL_COM_LUDOVICTEMGOUA_IMDB=DEBUG) with no code change - e.g. to get per-query
+    # detail from infrastructure.persistence/cache while debugging locally, without turning up noise
+    # from the framework itself (Spring/Hikari/Tomcat stay at root's INFO).
+    com.ludovictemgoua.imdb: INFO

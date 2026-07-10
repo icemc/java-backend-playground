@@ -2,6 +2,8 @@ package com.ludovictemgoua.imdb.infrastructure.persistence;
 
 import com.ludovictemgoua.imdb.domain.model.GraphPath;
 import com.ludovictemgoua.imdb.domain.repository.CoStarGraphRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
@@ -18,6 +20,14 @@ import java.util.Optional;
 
 @Repository
 public class JdbcCoStarGraphRepository implements CoStarGraphRepository {
+
+    private static final Logger log = LoggerFactory.getLogger(JdbcCoStarGraphRepository.class);
+
+    // A load test found a persistent tail of pairs taking multiple seconds even after fixing the
+    // two real bugs (LLD §5.2) and a missing index (V4) - likely the search reaching a large hub
+    // partway through expansion with no intersection yet. This threshold flags that population in
+    // logs (distinct from the use case's own per-call INFO line) without needing a trace lookup.
+    private static final long SLOW_QUERY_THRESHOLD_MILLIS = 1000;
 
     private final NamedParameterJdbcTemplate jdbc;
     private final int sideCap;
@@ -56,7 +66,21 @@ public class JdbcCoStarGraphRepository implements CoStarGraphRepository {
                 .addValue("personA", personA).addValue("personB", personB)
                 .addValue("sideCap", sideCap).addValue("absoluteMaxDegree", absoluteMaxDegree);
 
-        return jdbc.query(sql, params, JdbcCoStarGraphRepository::mapGraphPath).stream().findFirst();
+        log.debug("executing find_shortest_co_star_path: personA={} personB={} sideCap={} absoluteMaxDegree={}",
+                personA, personB, sideCap, absoluteMaxDegree);
+        long startMillis = System.currentTimeMillis();
+        Optional<GraphPath> result =
+                jdbc.query(sql, params, JdbcCoStarGraphRepository::mapGraphPath).stream().findFirst();
+        long durationMs = System.currentTimeMillis() - startMillis;
+
+        if (durationMs > SLOW_QUERY_THRESHOLD_MILLIS) {
+            log.warn("slow find_shortest_co_star_path: personA={} personB={} durationMs={}",
+                    personA, personB, durationMs);
+        } else {
+            log.debug("find_shortest_co_star_path completed: personA={} personB={} durationMs={} found={}",
+                    personA, personB, durationMs, result.isPresent());
+        }
+        return result;
     }
 
     private static GraphPath mapGraphPath(ResultSet rs, int rowNum) throws SQLException {

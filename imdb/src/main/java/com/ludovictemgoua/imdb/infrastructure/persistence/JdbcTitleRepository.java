@@ -9,6 +9,8 @@ import com.ludovictemgoua.imdb.domain.model.TitleCore;
 import com.ludovictemgoua.imdb.domain.model.TitleSummary;
 import com.ludovictemgoua.imdb.domain.repository.TitleRepository;
 import com.ludovictemgoua.imdb.utils.ImdbIds;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -22,6 +24,8 @@ import java.util.Optional;
 
 @Repository
 public class JdbcTitleRepository implements TitleRepository {
+
+    private static final Logger log = LoggerFactory.getLogger(JdbcTitleRepository.class);
 
     private final NamedParameterJdbcTemplate jdbc;
 
@@ -49,6 +53,10 @@ public class JdbcTitleRepository implements TitleRepository {
 
         List<TitleSummary> content = jdbc.query(dataSql, params, JdbcTitleRepository::mapSummary);
         Long total = jdbc.queryForObject(countSql, params, Long.class);
+        // total is an under-count for very common query terms (gin_fuzzy_search_limit, V1 migration)
+        // - worth having at DEBUG to notice if that trade-off ever looks wrong for a specific term.
+        log.debug("title search: query={} page={} size={} returned={} total={}",
+                query, page, size, content.size(), total);
         return new PagedResult<>(content, total == null ? 0 : total, page, size);
     }
 
@@ -118,7 +126,9 @@ public class JdbcTitleRepository implements TitleRepository {
                 """;
         var params = new MapSqlParameterSource()
                 .addValue("genre", genre).addValue("minVotes", minVotes).addValue("limit", limit);
-        return jdbc.query(sql, params, JdbcTitleRepository::mapTopRated);
+        List<GenreTopRatedItem> results = jdbc.query(sql, params, JdbcTitleRepository::mapTopRated);
+        log.debug("top rated: genre={} limit={} minVotes={} returned={}", genre, limit, minVotes, results.size());
+        return results;
     }
 
     @Override
@@ -132,9 +142,16 @@ public class JdbcTitleRepository implements TitleRepository {
                 LIMIT 1
                 """;
         var params = new MapSqlParameterSource().addValue("personA", personA).addValue("personB", personB);
-        return jdbc.query(sql, params, (rs, rowNum) ->
+        // findAnyCommonTitle was the site of a real bug (V4 migration) - title_principals had no
+        // usable index on nconst, so this fell back to a 1s+ sequential scan of a 100M-row table on
+        // every call. DEBUG timing here would have caught a regression of that fix immediately.
+        long startMillis = System.currentTimeMillis();
+        Optional<SharedTitle> result = jdbc.query(sql, params, (rs, rowNum) ->
                 new SharedTitle(ImdbIds.formatTitleId(rs.getInt("tconst")), rs.getString("primary_title")))
                 .stream().findFirst();
+        log.debug("find any common title: personA={} personB={} durationMs={} found={}",
+                personA, personB, System.currentTimeMillis() - startMillis, result.isPresent());
+        return result;
     }
 
     private List<CreditedPerson> findCrew(int tconst, String column) {
