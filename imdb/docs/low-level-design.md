@@ -96,6 +96,9 @@ imdb/
   pom.xml
   Dockerfile
   docker-compose.yaml
+  docker-compose.e2e.yaml           # lightweight plain-postgres stack for the CI e2e stage, §10
+  postman/
+    imdb-e2e.postman_collection.json  # Newman-run contract tests against the e2e stack, §10
   docs/
     REQUIREMENTS.md
     product-design.md
@@ -185,10 +188,17 @@ imdb/
                                                    # acting-only index V1 created
     test/
       java/com/ludovictemgoua/imdb/
-        (unit tests against domain interfaces, controller tests, Testcontainers integration tests - §10)
+        application/                        # unit tests, mocked domain.repository interfaces - §10
+        infrastructure/
+          persistence/*IntegrationTest.java  # Testcontainers Postgres - §10
+          cache/*Test.java                   # unit: mocked delegate, no Spring context - §10
+          cache/*IntegrationTest.java        # integration: Testcontainers Redis, real (de)serialization - §10
+        presentation/                        # MockMvc controller tests, mocked use cases
+        TestcontainersConfiguration.java
       resources/
         fixtures/
-          fixture-data.sql
+          fixture-data.sql                  # single source of truth: integration tests (@Sql) and
+                                             # the e2e stage's seed service both load this same file
 ```
 
 `application.yaml`, not `.properties`: the config surface is more nested than a typical CRUD app -
@@ -690,31 +700,106 @@ docker-compose --profile load-test run k6 run /scripts/six-degrees.js
 ## 10. Test Plan
 
 The seeded `abanda/imdb-postgresql` image is ~20GB and takes 20-30 minutes to import - unusable as a CI
-dependency. Testing splits accordingly, and the onion split from §2 changes *what* "unit test" means here
-for the better: use-case implementations are tested against mocked `domain.repository` **interfaces**
-with plain Mockito, no Spring context and no Testcontainers required at all.
+dependency. Testing splits into three tiers - unit, integration, e2e/contract - run as three sequential
+jobs in `.github/workflows/imdb-ci.yml` (`unit` -> `integration` -> `e2e`, each gated on the previous one
+passing), and the onion split from §2 changes *what* "unit test" means here for the better: use-case
+implementations are tested against mocked `domain.repository` **interfaces** with plain Mockito, no Spring
+context and no Testcontainers required at all.
 
-- **Unit tests**: `application`-layer `*UseCaseImpl` classes against mocked `domain.repository`
+### 10.1 Unit tests (Maven Surefire, `mvn test`)
+
+- **Use-case tests**: `application`-layer `*UseCaseImpl` classes against mocked `domain.repository`
   interfaces (JUnit 5 + Mockito + AssertJ, matching `votee`'s existing testing style in this monorepo).
   Because these are pure interface mocks, none of these tests touch Postgres, Redis, or Spring at all.
-- **Decorator tests**: a small, separate test per `infrastructure.cache` decorator verifying it actually
-  delegates on a cache miss and doesn't re-invoke the delegate on a hit - previously moot (the old
-  `DistanceCache` design in §2.1 needed this reasoned about carefully to avoid the self-invocation
-  pitfall); now a simple, mechanical test against a mock delegate.
-- **Integration tests**: Testcontainers running a plain `postgres:17` image, exercising the
-  `infrastructure.persistence` implementations directly against their `domain.repository` interface
-  contracts. Flyway runs `V0`/`V1`/`V2` from §3 automatically on context startup (`V0` is what actually
-  creates the base tables here - see §3.4), then a small hand-authored `fixture-data.sql` (loaded via
-  `@Sql` on the test class, which runs after the context - and therefore Flyway - is already up) seeds
-  rows covering: a known multi-hop co-star chain (to exercise the bidirectional CTE end-to-end, including
-  a deliberate case where the true path requires more than one hop on each side), a tied weighted-rating
-  case, and an ambiguous shared name. Fast and deterministic.
+- **Decorator unit tests** (`infrastructure.cache.Caching*Test`): verify each decorator delegates on a
+  cache miss and doesn't re-invoke the delegate on a hit, against a mocked delegate with a plain
+  `ConcurrentMapCacheManager` (or an outright mock `Cache`) - no Spring context, no real Redis. Previously
+  this reasoning needed care (the old `DistanceCache` design in §2.1 had a self-invocation pitfall to
+  avoid); now it's a simple, mechanical test. **What this tier structurally cannot catch**: an in-memory
+  map never serializes anything, so a real Redis (de)serialization bug - e.g. the `GenericJacksonJsonRedis-
+  Serializer` type-metadata `ClassCastException` this project hit earlier - passes every one of these tests
+  while still breaking in production. That gap is closed in §10.2, not here.
 - **Controller tests**: `MockMvc` against mocked `application`-layer use-case interfaces (`@MockitoBean` -
   the current replacement for the older `@MockBean`, checked against the Boot 4.1 testing reference docs
   directly), covering request validation and `ProblemDetail` error-shape contracts.
-- **CI**: GitHub Actions, matching `votee`'s existing workflow pattern - unit + decorator + integration
-  tests against the lightweight fixture only.
-- **Load tests**: k6 (§8), run manually against the fully-seeded stack, not part of the CI gate.
+
+Classified by naming convention, not by directory: `maven-surefire-plugin` is configured in `pom.xml` to
+exclude `**/*IntegrationTest.java` and `**/ImdbApplicationTests.java` (the Testcontainers-backed Spring
+Boot smoke test), so everything else under `src/test/java` runs here by default - no file relocation
+needed, matching the existing `*IntegrationTest.java` suffix convention already in place before this work.
+
+### 10.2 Integration tests (Maven Failsafe, `mvn failsafe:integration-test failsafe:verify`)
+
+- **Persistence integration tests** (`infrastructure.persistence.*IntegrationTest`): Testcontainers
+  running a plain `postgres:17` image, exercising the `infrastructure.persistence` implementations
+  directly against their `domain.repository` interface contracts. Flyway runs `V0`/`V1`/`V2` from §3
+  automatically on context startup (`V0` is what actually creates the base tables here - see §3.4), then
+  the shared `fixture-data.sql` (loaded via `@Sql` on the test class, which runs after the context - and
+  therefore Flyway - is already up) seeds rows covering: a known multi-hop co-star chain (to exercise the
+  bidirectional CTE end-to-end, including a deliberate case where the true path requires more than one hop
+  on each side), a tied weighted-rating case, and an ambiguous shared name. Fast and deterministic.
+- **Cache integration tests** (`infrastructure.cache.Caching*IntegrationTest`, one per decorator): the
+  same four decorators as §10.1, but wired against a **real Redis** via Testcontainers
+  (`TestcontainersConfiguration`) and a real `RedisCacheManager`, not `ConcurrentMapCacheManager`. Each
+  test calls the decorated method twice inside a `@Transactional @Sql("/fixtures/fixture-data.sql")`
+  context, asserts the second call's result equals the first, and asserts the entry is actually present in
+  the named cache region under its documented key (§6) via `CacheManager.getCache(region).get(key)`. This
+  tier exists specifically because §10.1's mock-backed decorator tests cannot exercise real serialization -
+  a `RedisCacheManager` is the only thing in this test plan that actually round-trips a value through
+  `GenericJacksonJsonRedisSerializer` the way production does. Four tests, one per region: `title-search`
+  (`search("Few Good Men", 0, 20)`), `title-detail` (`getDetail("tt0000100")`), `top-rated`
+  (`findTopRated("Action", 10, 100)`), `six-degrees` (`findShortestPath(1, 2)`, keyed `"1-2"` per §6's
+  `min-max` convention).
+- `ImdbApplicationTests` (the Spring Boot context-loads smoke test, Testcontainers-backed) also runs here,
+  alongside the two tiers above - it doesn't match the `*IntegrationTest.java` suffix, so it's named
+  explicitly in both the Surefire exclude and the Failsafe include.
+
+`maven-failsafe-plugin` is configured with the mirror-image `<includes>` (`**/*IntegrationTest.java`,
+`**/ImdbApplicationTests.java`) and bound to the `integration-test`/`verify` goals; `spring-boot-starter-
+parent` manages both plugins' versions, so no explicit `<version>` is pinned in `pom.xml` for either.
+
+### 10.3 E2E / contract tests (Postman + Newman, against `docker-compose.e2e.yaml`)
+
+A third tier below Testcontainers: a fully-built `imdb-service` Docker image, talking to real (if
+minimally-seeded) Postgres and Redis containers over the network, hit with real HTTP requests - the only
+tier that exercises the actual `Dockerfile` image and the full request path end-to-end, including the
+`RequestLoggingFilter`/`ApiExceptionHandler` wiring from §7/§9.
+
+- **Stack**: `docker-compose.e2e.yaml`, a deliberately separate file from the main `docker-compose.yaml`
+  (own `name: imdb-e2e` and `imdb-e2e-net` network - see the file's own header comment for the project-name
+  collision this guards against). `postgres` is plain `postgres:17`, not `abanda/imdb-postgresql` - the
+  real image's 20-30 minute import is fine for local dev, not for a stage that runs on every push. Schema
+  is built the same way the integration tests build it: `imdb-service`'s own Flyway migrations
+  (`V0`-`V4`), not a hand-copied schema dump.
+- **Seed**: a one-shot `seed` service (plain `postgres:17` image as a `psql` client, `depends_on:
+  imdb-service: condition: service_healthy` so Flyway has already run) loads the *same*
+  `src/test/resources/fixtures/fixture-data.sql` the integration tests use via a read-only bind mount -
+  one fixture dataset, not two to keep in sync, per the design discussion that settled on this over
+  hand-authoring a separate e2e-only dataset.
+- **Contract tests**: `imdb/postman/imdb-e2e.postman_collection.json`, a Postman Collection v2.1 with
+  inline `pm.test`/`pm.expect` assertions, run via `npx --yes newman run ... --env-var
+  baseUrl=http://localhost:8080` (no separate npm install needed - GitHub-hosted runners ship Node.js).
+  Nine requests covering every endpoint in §4 plus their documented edge cases: health, fuzzy search,
+  title detail (found and 404), top-rated (weighted-rating ordering, not raw average), six-degrees direct
+  / multi-hop / no-path / ambiguous-name. Verified locally: 22/22 assertions passing.
+- **CI orchestration** (`imdb-ci.yml`'s `e2e` job): bring the stack up with `-p imdb-e2e` (matching the
+  compose file's own `name:`), poll `/actuator/health` until healthy, poll `docker inspect` on the seed
+  container until it exits (failing loudly with its logs if the exit code is non-zero), run Newman, dump
+  `docker compose logs` on failure, and always tear the stack down (`down -v`) regardless of outcome.
+
+### 10.4 CI summary
+
+| Job | Command | Depends on |
+|---|---|---|
+| `unit` | `mvn -B test` | - |
+| `integration` | `mvn -B failsafe:integration-test failsafe:verify` | `unit` |
+| `e2e` | compose up -> health/seed poll -> `newman run` -> teardown | `integration` |
+
+Each job fails fast for the ones after it (`needs:` in GitHub Actions), so a broken unit test never pays
+for a Docker build, and a broken integration test never pays for the e2e stack's bring-up time.
+
+- **Load tests**: k6 (§8), run manually against the fully-seeded, production-image stack, not part of the
+  CI gate - a different concern (performance under load) from the correctness tiers above.
 
 ## 11. Open Items for Implementation
 
@@ -747,7 +832,11 @@ Done, verified against a real running stack (not just written and assumed correc
 
 - **`Dockerfile`**: multi-stage build (Maven build stage -> JRE runtime stage), confirmed with a real
   `docker build` (549MB final image, no errors).
-- **Test suite** (§10): all 50 tests (unit, decorator, integration, controller) written and passing.
+- **Test suite** (§10): 32 unit tests (Surefire: use-case, decorator-unit, controller) and 22 integration
+  tests (Failsafe: persistence, the 4 Redis-Testcontainers cache tests, and the Spring Boot smoke test),
+  all passing - plus the e2e tier's 9-request/22-assertion Postman/Newman collection, verified against a
+  live `docker-compose.e2e.yaml` stack. All three tiers wired into `imdb-ci.yml` as sequential
+  `unit` -> `integration` -> `e2e` jobs.
 - **Grafana dashboards** under `observability/grafana/provisioning/dashboards/json/` - four dashboards
   (HTTP overview, six-degrees latency breakdown, cache hit ratio, k6 load-test results), confirmed by
   actually bringing up Grafana and checking the provisioned dashboards via its API (`/api/search`,

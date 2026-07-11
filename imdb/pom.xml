@@ -140,6 +140,42 @@
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
 			</plugin>
+			<!-- mvn test -> unit + fast Spring-slice tests only (no Docker). Integration tests keep
+			     their existing *IntegrationTest.java naming (no rename sweep) - Surefire just excludes
+			     that pattern instead of Failsafe's default *IT.java. ImdbApplicationTests is the one
+			     Testcontainers-based test that doesn't follow that suffix; listed explicitly rather
+			     than renamed, for the same reason. -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<configuration>
+					<excludes>
+						<exclude>**/*IntegrationTest.java</exclude>
+						<exclude>**/ImdbApplicationTests.java</exclude>
+					</excludes>
+				</configuration>
+			</plugin>
+			<!-- mvn verify -> unit (Surefire, above) then integration (Failsafe, here) - Testcontainers
+			     spins up real Postgres/Redis/the Grafana LGTM stack for these, so they're deliberately
+			     kept out of the fast mvn test loop. -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-failsafe-plugin</artifactId>
+				<configuration>
+					<includes>
+						<include>**/*IntegrationTest.java</include>
+						<include>**/ImdbApplicationTests.java</include>
+					</includes>
+				</configuration>
+				<executions>
+					<execution>
+						<goals>
+							<goal>integration-test</goal>
+							<goal>verify</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
 		</plugins>
 	</build>
 

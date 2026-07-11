@@ -1,0 +1,90 @@
+# Explicit project name - without this, Compose derives the project name from the directory
+# ("imdb"), the SAME default the main docker-compose.yaml gets, and this file's service names
+# (postgres/redis) collide with that stack's, causing Compose to "recreate" - replace - the real dev
+# containers with this file's empty ones. Confirmed the hard way: running this once while the main
+# stack was up swapped out imdb-postgres (100M+ imported rows) for a fresh, empty postgres:17 - no
+# data was actually lost (it lives in the imdb_imdb_data named volume, untouched), but the running
+# container was gone until the main stack was brought back up. This name isolates the two entirely.
+name: imdb-e2e
+
+networks:
+  imdb-e2e-net:
+    name: imdb-e2e-net
+
+services:
+  # ---------------------------------------------------------------------
+  # Plain postgres:17, not abanda/imdb-postgresql - the real image's dataset
+  # import takes 20-30 minutes, which is fine for local dev but not for a
+  # CI stage that should run on every push. imdb-service's own Flyway
+  # migrations build the schema here (same V0-V4 migrations as production,
+  # V0's CREATE TABLE IF NOT EXISTS actually creates the tables this time,
+  # since this schema starts genuinely empty); the seed service below then
+  # loads the same small, known fixture dataset the integration tests use.
+  # ---------------------------------------------------------------------
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: imdb
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: imdb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U imdb -d imdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - imdb-e2e-net
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - imdb-e2e-net
+
+  imdb-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/imdb
+      SPRING_DATASOURCE_USERNAME: imdb
+      SPRING_DATASOURCE_PASSWORD: password
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: "6379"
+      # No tracing/metrics export configured - the e2e stage only needs the app + its data stores,
+      # not the full observability stack (that's exercised separately, LLD §7/§8).
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/actuator/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    networks:
+      - imdb-e2e-net
+
+  # One-shot: waits for imdb-service to be healthy (so Flyway has already built the schema), then
+  # loads the same fixture dataset the Testcontainers integration tests use - one dataset, not two to
+  # keep in sync. Exits after loading; the Postman/Newman run against the now-seeded stack.
+  seed:
+    image: postgres:17
+    depends_on:
+      imdb-service:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: password
+    volumes:
+      - ./src/test/resources/fixtures/fixture-data.sql:/seed/fixture-data.sql:ro
+    entrypoint: ["psql", "-h", "postgres", "-U", "imdb", "-d", "imdb", "-f", "/seed/fixture-data.sql"]
+    networks:
+      - imdb-e2e-net
