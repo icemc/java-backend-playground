@@ -57,6 +57,10 @@ management:
     metrics:
       export:
         enabled: false
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
 
 six-degrees:
   side-cap: 4

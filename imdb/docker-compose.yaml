@@ -101,7 +101,11 @@ services:
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
-      - --enable-feature=remote-write-receiver # accepts k6's experimental-prometheus-rw output
+      # NOT --enable-feature=remote-write-receiver - that's not a real --enable-feature value on this
+      # Prometheus version (3.11.3 as pulled here); confirmed via a live "Unknown option for
+      # --enable-feature" warning in the container's own logs, and the write endpoint 404ing until
+      # this was corrected. Remote write receiving has its own dedicated flag instead.
+      - --web.enable-remote-write-receiver # accepts k6's experimental-prometheus-rw output
     ports:
       - "9090:9090"
     volumes:
@@ -216,6 +220,16 @@ services:
     profiles: ["load-test"]
     environment:
       K6_PROMETHEUS_RW_SERVER_URL: http://prometheus:9090/api/v1/write
+      # K6_PROMETHEUS_RW_SERVER_URL alone does not activate the output - confirmed empirically (a run
+      # without this completed with no errors and pushed nothing at all). K6_OUT is the env-var form
+      # of `k6 run --out experimental-prometheus-rw`, so the documented `docker compose --profile
+      # load-test run k6 run /scripts/<name>.js` (LLD §8) works without needing that flag typed by hand.
+      K6_OUT: experimental-prometheus-rw
+      # Default trend-stat export is p99 only - the k6 dashboard's "p95 request duration" panel
+      # (LLD §7/§8) needs p95 specifically; confirmed empirically that only k6_..._p99 series existed
+      # under the default. Each Trend metric (http_req_duration, http_req_waiting, etc.) gets both
+      # suffixes once this is set.
+      K6_PROMETHEUS_RW_TREND_STATS: "p(95),p(99)"
     volumes:
       - ./k6:/scripts:ro
     networks:

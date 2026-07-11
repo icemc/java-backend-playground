@@ -6,7 +6,7 @@
   "schemaVersion": 39,
   "refresh": "10s",
   "time": { "from": "now-15m", "to": "now" },
-  "description": "Uses Spring Boot's auto-bound cache.gets/cache.puts metrics for RedisCacheManager (no custom instrumentation - LLD §7). Verify the cache_gets_total{result=...} label values once the app has actually served traffic; this was not confirmed against a live scrape at authoring time.",
+  "description": "cache.gets/cache.puts are manually bound (CacheConfig.cacheStatisticsMeterBinder, LLD §6/§7), not Spring Boot auto-binding - decompiling spring-boot-actuator-autoconfigure-4.1.0.jar showed the cache-metrics package Boot 2/3 used to ship (CacheMetricsRegistrar et al.) no longer exists in Boot 4.1 at all. The replacement reads Spring Data Redis's own RedisCacheWriter statistics collector directly. Verified live: exercising each cached endpoint twice produces the expected 1 miss + 1 hit + 1 put per region.",
   "panels": [
     {
       "id": 1,

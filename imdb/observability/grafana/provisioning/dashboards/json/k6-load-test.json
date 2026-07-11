@@ -43,13 +43,14 @@
       "id": 3,
       "title": "p95 request duration",
       "type": "timeseries",
+      "description": "k6's experimental-prometheus-rw output pre-computes trend percentiles client-side and exports them as plain gauges per request URL (k6_http_req_duration_p95{name=...}, no _bucket series at all) - averaged across URLs here rather than histogram_quantile'd, since there's no histogram to quantile. K6_PROMETHEUS_RW_TREND_STATS=\"p(95),p(99)\" (docker-compose.yaml) is what makes the p95 series exist; the default is p99 only. Note the k6() call syntax - a bare \"p95\" is rejected at k6 startup with \"invalid trend stat\", confirmed empirically.",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(k6_http_req_duration_seconds_bucket[$__rate_interval])))",
+          "expr": "avg(k6_http_req_duration_p95)",
           "legendFormat": "p95"
         }
       ],
@@ -59,17 +60,18 @@
       "id": 4,
       "title": "Failed request rate",
       "type": "timeseries",
+      "description": "k6's http_req_failed is itself a \"rate\" metric (a 0..1 boolean average, not a counter) - k6_http_req_failed_total never exists, only k6_http_req_failed_rate.",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(k6_http_req_failed_total[$__rate_interval]))",
-          "legendFormat": "failures/s"
+          "expr": "avg(k6_http_req_failed_rate)",
+          "legendFormat": "failure rate"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] }
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] }
     }
   ]
 }

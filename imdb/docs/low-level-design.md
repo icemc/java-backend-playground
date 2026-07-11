@@ -610,10 +610,14 @@ instead of just measuring a warm Redis round-trip after the first request - see 
 
 ## 7. Observability Wiring
 
-- **Metrics**: `micrometer-registry-prometheus`, default HTTP/JVM metrics plus custom ones: a `Timer` per
-  endpoint's DB-query phase (so the six-degrees CTE's latency is visible as its own series, separate from
-  total request latency), and `Counter`s for cache hit/miss per cache region. Both are instrumentation
-  concerns and belong in `infrastructure` (the repository/decorator classes), not `application`.
+- **Metrics**: `micrometer-registry-prometheus`. Default HTTP (`http.server.requests`, percentile-histogram
+  enabled - §7.1) and JVM/process metrics come from Boot's own auto-configuration; there is no separate
+  custom `Timer` for the six-degrees CTE's DB-query phase specifically - `uri`-filtering the standard
+  `http_server_requests_seconds` histogram (six-degrees latency dashboard, §7.1) already isolates it from
+  the other three endpoints without needing one, since this API has exactly one repository call per
+  request on the hot path anyway. Cache hit/miss/put `Counter`s per region are manually bound
+  (`infrastructure.cache.CacheConfig.cacheStatisticsMeterBinder`, §7.1) - Boot 4.1 removed the
+  auto-binding this design originally assumed.
 - **Tracing**: the `spring-boot-starter-opentelemetry` starter (Boot 4.1's unified tracing starter -
   supersedes the Boot 3-era `micrometer-tracing-bridge-otel` + `opentelemetry-exporter-otlp` combo)
   exports to Tempo via `management.opentelemetry.tracing.export.otlp.endpoint=http://tempo:4318/v1/traces`
@@ -663,6 +667,68 @@ instead of just measuring a warm Redis round-trip after the first request - see 
   at a `dashboards/json/` folder. Actual dashboard JSON models (HTTP overview, six-degrees CTE latency
   breakdown, cache hit ratio, k6 load-test results) are authored during implementation, not shipped as
   part of this design (see §11).
+
+### 7.1 Making the dashboards actually work: four real bugs, found by querying Prometheus directly
+
+All four dashboards were authored against assumed metric shapes and shipped without a live scrape ever
+confirming them (§11's own caveat on the cache dashboard: "not confirmed against a live scrape at
+authoring time"). Once actually queried against a running stack, every dashboard except three panels of
+HTTP Overview turned out to be empty - not from a dashboard-JSON bug in most cases, but because the
+metrics themselves didn't exist yet. Fixed in order of discovery:
+
+1. **No `_bucket` series at all, anywhere** - every `histogram_quantile(...)` panel (HTTP Overview's p95,
+   all three Six Degrees Latency panels) was empty because Micrometer only emits a Timer's `_count`/`_sum`/
+   `_max`, never `_bucket`, unless percentile histograms are explicitly turned on. `application.yaml` never
+   set this. Fix: `management.metrics.distribution.percentiles-histogram.http.server.requests: true`.
+   Verified: `http_server_requests_seconds_bucket` appears in `/actuator/prometheus` immediately after
+   restart, and `histogram_quantile(0.95, ...)` returns real numbers once the target `uri` has recent
+   traffic in the query window (a `uri` with none still returns `NaN` - expected Prometheus behavior for
+   an all-zero-rate histogram, not a bug).
+2. **`cache_gets_total`/`cache_puts_total` never existed at all** - not a naming or label mismatch, the
+   metrics were simply never registered. Root cause, confirmed by decompiling the actual jars rather than
+   trusting memory of older Boot versions: `spring-boot-actuator-autoconfigure-4.1.0.jar` contains no
+   `cache` package whatsoever - the `CacheMetricsRegistrar`/`CacheMeterBinderProvider` auto-binding this
+   design assumed (a real feature in Boot 2/3) does not exist in Boot 4.1. Fix, replicated manually in
+   `CacheConfig` rather than reintroducing Boot's removed mechanism: build the `RedisCacheManager`'s
+   `RedisCacheWriter` explicitly with `.collectStatistics()` (Spring Data Redis's own, independent
+   `CacheStatisticsCollector` - unaffected by the Boot-side removal), and register a `MeterBinder` bean
+   that exposes each region's `getHits()`/`getMisses()`/`getPuts()` as `FunctionCounter`s named
+   `cache.gets`/`cache.puts`, tagged `cache`/`result` to match the dashboard's existing (correctly
+   anticipated) query shape exactly. `initialCacheNames(...)` on the manager builder (added alongside this
+   fix) makes all four regions exist from startup rather than being created lazily on first use.
+   Verified: exercising each cached endpoint exactly twice produces precisely 1 miss + 1 hit + 1 put per
+   region in `/actuator/prometheus`.
+3. **Prometheus's own remote-write receiver was never actually on** - `docker-compose.yaml` passed
+   `--enable-feature=remote-write-receiver`, which was never a valid `--enable-feature` value; Prometheus
+   3.11.3's own startup log said so outright ("Unknown option for --enable-feature"), and the write
+   endpoint 404'd accordingly. The correct, and long-standing, flag is the dedicated
+   `--web.enable-remote-write-receiver` (confirmed against `prometheus --help` directly). This is why the
+   k6 dashboard had zero data even before its query-shape bugs (below) mattered at all.
+4. **k6's `experimental-prometheus-rw` output doesn't emit what the dashboard assumed**, on two counts,
+   both confirmed by actually running `k6 run --out experimental-prometheus-rw` against the live stack and
+   inspecting exactly what landed in Prometheus:
+   - `K6_PROMETHEUS_RW_SERVER_URL` alone does not activate the output - a run with only that env var set
+     completed with no errors and pushed nothing. `K6_OUT: experimental-prometheus-rw` (the env-var
+     equivalent of `k6 run --out experimental-prometheus-rw`) is now set directly on the `k6` service in
+     `docker-compose.yaml`, so the plain documented invocation (`docker compose --profile load-test run k6
+     run /scripts/<name>.js`, §8) works without anyone needing to type that flag by hand.
+   - There is no `k6_http_req_duration_seconds_bucket` or `k6_http_req_failed_total` - k6's trend metrics
+     (`http_req_duration`, etc.) are exported as pre-computed percentile *gauges* per request URL
+     (`k6_http_req_duration_p99{name=...}` by default - `p99` only, until
+     `K6_PROMETHEUS_RW_TREND_STATS: "p(95),p(99)"` is set to also get `_p95`; the bare form `"p95"` is
+     rejected at k6 startup with "invalid trend stat", confirmed empirically - it has to be k6's own
+     `p(95)` threshold syntax), and `http_req_failed` - a k6 "rate" metric (a 0..1 boolean average, not a
+     counter) - only ever exists as `k6_http_req_failed_rate`, never a `_total` counter. Fixed
+     `k6-load-test.json`'s two affected panels to query `avg(k6_http_req_duration_p95)` and
+     `avg(k6_http_req_failed_rate)` respectively (averaged across the per-URL series, since `search.js`
+     deliberately spreads requests across many distinct query terms - §8), with the failed-rate panel's
+     unit corrected from `reqps` to `percentunit` to match.
+
+All four dashboards were re-verified after these fixes: queried every panel's exact PromQL expression
+directly against Prometheus (both directly and through Grafana's own datasource-proxy API, to rule out a
+Grafana-side provisioning-cache issue) with real traffic generated live (`curl` loops for the HTTP/cache
+panels, an actual short `k6 run` for the k6 panels), and confirmed real, non-`NaN`, non-empty values back
+for every one of them.
 
 ## 8. k6 Load Testing Plan
 
@@ -840,11 +906,12 @@ Done, verified against a real running stack (not just written and assumed correc
 - **Grafana dashboards** under `observability/grafana/provisioning/dashboards/json/` - four dashboards
   (HTTP overview, six-degrees latency breakdown, cache hit ratio, k6 load-test results), confirmed by
   actually bringing up Grafana and checking the provisioned dashboards via its API (`/api/search`,
-  `/api/dashboards/uid/...`) rather than trusting hand-written JSON to be schema-correct. The cache
-  hit-ratio dashboard's `cache_gets_total`/`cache_puts_total` metric names come from Spring Boot's
-  documented auto-binding of cache metrics for `RedisCacheManager` - flagged in the dashboard's own
-  description to double check against a real scrape once the app has served traffic, since this wasn't
-  directly observed (see the next item for why).
+  `/api/dashboards/uid/...`), and - going further than schema-correctness - by generating real traffic
+  and confirming every panel's exact PromQL expression returns real, non-empty data through Prometheus
+  and through Grafana's own datasource-proxy API. Four real bugs surfaced by that verification and were
+  fixed (missing percentile-histogram config, Boot 4.1 having quietly dropped automatic cache-metrics
+  binding entirely, a Prometheus flag that was never valid, and wrong assumptions about k6's remote-write
+  metric shapes) - full writeup in §7.1.
 - **k6 scripts and `data/sampled-people.csv`** under `imdb/k6/` - `title-detail.js` and `six-degrees.js`
   discover real ids/people from the live API at `setup()` time rather than shipping a
   dataset-snapshot-specific list of hardcoded ids (a first attempt at hardcoding a few "well-known" real
@@ -874,8 +941,6 @@ choice to run, not something to trigger incidentally:
   to arbitrarily drop neighbors to bound the search).
 - Decide the `co_star_edges` refresh cadence (PDD §11 open question) if this ever moves beyond a
   single-import deployment.
-- Confirm the `cache_gets_total`/`cache_puts_total` metric names above against a real scrape once the app
-  has actually served cached traffic.
 - The onion layering in §2 is enforced today only by convention (import direction) and code review, not
   by a build-tool boundary. If this project grows past its current size, splitting `domain`/`application`/
   `infrastructure`/`presentation` into separate Maven modules would make the dependency rule
