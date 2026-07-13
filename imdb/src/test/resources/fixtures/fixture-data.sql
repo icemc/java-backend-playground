@@ -66,3 +66,13 @@ INSERT INTO title_principals (tconst, ordering, nconst, category) VALUES
 -- co_star_edges is a materialized view (LLD §3.3) - it does not auto-update when title_principals
 -- changes underneath it, so every fixture load must explicitly refresh it.
 REFRESH MATERIALIZED VIEW co_star_edges;
+
+-- title_id_seq/person_id_seq (V6) are created during Flyway migration, which in this Testcontainers
+-- environment runs against a genuinely empty schema (this fixture loads afterward, once the full
+-- Spring context - and therefore Flyway - is already up) - so both sequences start at 1 here, unlike
+-- production where abanda/imdb-postgresql's import completes before imdb-service's migrations ever
+-- run. Advancing them past this fixture's own max ids here simulates that real ordering, so any
+-- admin-CRUD integration test that inserts a title/person doesn't collide with a fixture row (nconst
+-- 1 "Kevin Bacon" would otherwise be exactly what person_id_seq's first nextval() returns).
+SELECT setval('title_id_seq', (SELECT max(tconst) FROM title_basics) + 1, false);
+SELECT setval('person_id_seq', (SELECT max(nconst) FROM name_basics) + 1, false);

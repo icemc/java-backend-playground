@@ -28,4 +28,19 @@ public interface TitleRepository {
     List<GenreTopRatedItem> findTopRated(String genre, int limit, int minVotes);
 
     Optional<SharedTitle> findAnyCommonTitle(int personA, int personB);
+
+    TitleCore insertTitle(String primaryTitle, String originalTitle, String titleType,
+                          Integer startYear, Integer endYear, Integer runtimeMinutes, List<String> genres);
+
+    WriteResult updateTitle(int tconst, String primaryTitle, String originalTitle, String titleType,
+                            Integer startYear, Integer endYear, Integer runtimeMinutes,
+                            List<String> genres, int expectedVersion);
+
+    WriteResult softDeleteTitle(int tconst);
+
+    WriteResult upsertCrew(int tconst, List<Integer> directorIds, List<Integer> writerIds);
+
+    WriteResult upsertRating(int tconst, double averageRating, int numVotes);
+
+    WriteResult deleteRating(int tconst);
 }

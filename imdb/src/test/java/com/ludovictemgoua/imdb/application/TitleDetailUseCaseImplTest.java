@@ -26,7 +26,7 @@ class TitleDetailUseCaseImplTest {
     @Test
     void assemblesTitleDetailFromFiveRepositoryCalls() {
         var core = new TitleCore("tt0111161", "The Shawshank Redemption", "The Shawshank Redemption",
-                "movie", 1994, null, 142, List.of("Drama"), 9.3, 2900000);
+                "movie", 1994, null, 142, List.of("Drama"), 9.3, 2900000, 0);
         given(titleRepository.findCore(111161)).willReturn(Optional.of(core));
         given(titleRepository.findDirectors(111161))
                 .willReturn(List.of(new CreditedPerson("nm0001104", "Frank Darabont")));
@@ -58,7 +58,7 @@ class TitleDetailUseCaseImplTest {
     @Test
     void nullRatingFieldsDefaultToZeroRatherThanNull() {
         var core = new TitleCore("tt9999999", "Unrated Title", "Unrated Title",
-                "movie", null, null, null, List.of(), null, null);
+                "movie", null, null, null, List.of(), null, null, 0);
         given(titleRepository.findCore(9999999)).willReturn(Optional.of(core));
         given(titleRepository.findDirectors(9999999)).willReturn(List.of());
         given(titleRepository.findWriters(9999999)).willReturn(List.of());

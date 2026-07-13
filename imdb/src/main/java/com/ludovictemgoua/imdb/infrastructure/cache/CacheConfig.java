@@ -88,9 +88,20 @@ public class CacheConfig {
                                 .enableDefaultTyping(typeValidator)
                                 .build()));
 
+        // title-search is keyed by query:page:size (LLD §6) - an admin title write has no cheap way
+        // to know which of those arbitrary combinations it affects, so precise eviction (like
+        // title-detail) isn't possible and full-region eviction on every write would defeat the
+        // cache almost entirely. Accept a bounded staleness window instead (design doc §6.2).
+        //
+        // withCacheConfiguration must come after initialCacheNames: initialCacheNames registers every
+        // name in CACHE_NAMES against cacheDefaults, so calling it afterward would silently overwrite
+        // this override back to the 24h default.
+        RedisCacheConfiguration searchCacheConfig = defaults.entryTtl(Duration.ofMinutes(15));
+
         return RedisCacheManager.builder(redisCacheWriter)
                 .cacheDefaults(defaults)
                 .initialCacheNames(CACHE_NAMES)
+                .withCacheConfiguration("title-search", searchCacheConfig)
                 .build();
     }
 }

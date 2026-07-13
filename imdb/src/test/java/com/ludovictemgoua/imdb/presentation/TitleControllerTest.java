@@ -1,9 +1,11 @@
 package com.ludovictemgoua.imdb.presentation;
 
+import com.ludovictemgoua.imdb.application.contracts.TitleAdminUseCase;
 import com.ludovictemgoua.imdb.application.contracts.TitleDetailUseCase;
 import com.ludovictemgoua.imdb.application.contracts.TitleSearchUseCase;
 import com.ludovictemgoua.imdb.domain.exception.NotFoundException;
 import com.ludovictemgoua.imdb.domain.model.PagedResult;
+import com.ludovictemgoua.imdb.domain.model.TitleCore;
 import com.ludovictemgoua.imdb.domain.model.TitleSummary;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,8 +15,11 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -28,6 +33,8 @@ class TitleControllerTest {
     TitleSearchUseCase titleSearchUseCase;
     @MockitoBean
     TitleDetailUseCase titleDetailUseCase;
+    @MockitoBean
+    TitleAdminUseCase titleAdminUseCase;
 
     @Test
     void searchRequiresANonBlankTitleParam() throws Exception {
@@ -60,5 +67,31 @@ class TitleControllerTest {
 
         mockMvc.perform(get("/api/v1/titles/tt9999999"))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void createTitleRequiresAdminRole() throws Exception {
+        mockMvc.perform(post("/api/v1/titles")
+                        .with(user("1").roles("USER"))
+                        .contentType("application/json")
+                        .content("""
+                                {"primaryTitle":"New","originalTitle":"New","titleType":"movie","genres":[]}
+                                """))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void createTitleSucceedsForAdmin() throws Exception {
+        var created = new TitleCore("tt0000300", "New", "New", "movie", 2024, null, 100, List.of(), null, null, 0);
+        given(titleAdminUseCase.create(any())).willReturn(created);
+
+        mockMvc.perform(post("/api/v1/titles")
+                        .with(user("1").roles("ADMIN"))
+                        .contentType("application/json")
+                        .content("""
+                                {"primaryTitle":"New","originalTitle":"New","titleType":"movie","genres":[]}
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").value("tt0000300"));
     }
 }

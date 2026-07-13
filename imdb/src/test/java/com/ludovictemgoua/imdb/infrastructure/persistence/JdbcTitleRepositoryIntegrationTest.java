@@ -1,6 +1,8 @@
 package com.ludovictemgoua.imdb.infrastructure.persistence;
 
 import com.ludovictemgoua.imdb.TestcontainersConfiguration;
+import com.ludovictemgoua.imdb.domain.repository.WriteResult;
+import com.ludovictemgoua.imdb.utils.ImdbIds;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -8,6 +10,8 @@ import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.jdbc.Sql;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -92,5 +96,68 @@ class JdbcTitleRepositoryIntegrationTest {
         jdbc.update("UPDATE title_basics SET deleted_at = now() WHERE tconst = 100");
 
         assertThat(repository.search("Few Good Men", 0, 20).content()).extracting("id").doesNotContain("tt0000100");
+    }
+
+    @Test
+    void insertTitleCreatesARowWithVersionZero() {
+        var created = repository.insertTitle("New Movie", "New Movie", "movie", 2024, null, 120, List.of("Drama"));
+
+        assertThat(created.version()).isEqualTo(0);
+        assertThat(repository.findCore(ImdbIds.parseTitleId(created.id())).orElseThrow().primaryTitle())
+                .isEqualTo("New Movie");
+    }
+
+    @Test
+    void insertedTitleIdIsAboveTheSeededRange() {
+        var created = repository.insertTitle("Another Movie", "Another Movie", "movie", 2024, null, 90, List.of());
+
+        assertThat(ImdbIds.parseTitleId(created.id())).isGreaterThan(200);
+    }
+
+    @Test
+    void updateTitleBumpsVersionAndPersists() {
+        var created = repository.insertTitle("Old Name", "Old Name", "movie", 2020, null, 100, List.of("Drama"));
+        int tconst = ImdbIds.parseTitleId(created.id());
+
+        var result = repository.updateTitle(
+                tconst, "New Name", "New Name", "movie", 2021, null, 110, List.of("Comedy"), created.version());
+
+        assertThat(result).isEqualTo(WriteResult.SUCCESS);
+        var updated = repository.findCore(tconst).orElseThrow();
+        assertThat(updated.primaryTitle()).isEqualTo("New Name");
+        assertThat(updated.version()).isEqualTo(1);
+    }
+
+    @Test
+    void updateTitleReturnsVersionConflictOnStaleVersion() {
+        var created = repository.insertTitle("Stale Test", "Stale Test", "movie", 2020, null, 100, List.of());
+        int tconst = ImdbIds.parseTitleId(created.id());
+
+        var result = repository.updateTitle(
+                tconst, "New Name", "New Name", "movie", 2021, null, 110, List.of(), created.version() + 1);
+
+        assertThat(result).isEqualTo(WriteResult.VERSION_CONFLICT);
+    }
+
+    @Test
+    void softDeleteTitleExcludesItFromFindCore() {
+        var created = repository.insertTitle("Delete Me", "Delete Me", "movie", 2020, null, 100, List.of());
+        int tconst = ImdbIds.parseTitleId(created.id());
+
+        repository.softDeleteTitle(tconst);
+
+        assertThat(repository.findCore(tconst)).isEmpty();
+    }
+
+    @Test
+    void upsertRatingThenDeleteRatingRoundTrips() {
+        var created = repository.insertTitle("Rating Test", "Rating Test", "movie", 2020, null, 100, List.of());
+        int tconst = ImdbIds.parseTitleId(created.id());
+
+        repository.upsertRating(tconst, 7.5, 1000);
+        assertThat(repository.findCore(tconst).orElseThrow().averageRating()).isEqualTo(7.5);
+
+        repository.deleteRating(tconst);
+        assertThat(repository.findCore(tconst).orElseThrow().averageRating()).isNull();
     }
 }

@@ -8,6 +8,7 @@ import com.ludovictemgoua.imdb.domain.model.SharedTitle;
 import com.ludovictemgoua.imdb.domain.model.TitleCore;
 import com.ludovictemgoua.imdb.domain.model.TitleSummary;
 import com.ludovictemgoua.imdb.domain.repository.TitleRepository;
+import com.ludovictemgoua.imdb.domain.repository.WriteResult;
 import com.ludovictemgoua.imdb.utils.ImdbIds;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -64,7 +65,7 @@ public class JdbcTitleRepository implements TitleRepository {
     public Optional<TitleCore> findCore(int tconst) {
         String sql = """
                 SELECT tb.tconst, tb.primary_title, tb.original_title, tb.title_type,
-                       tb.start_year, tb.end_year, tb.runtime_minutes, tb.genres,
+                       tb.start_year, tb.end_year, tb.runtime_minutes, tb.genres, tb.version,
                        tr.average_rating, tr.num_votes
                 FROM title_basics tb
                 LEFT JOIN title_ratings tr ON tr.tconst = tb.tconst AND tr.deleted_at IS NULL
@@ -155,6 +156,105 @@ public class JdbcTitleRepository implements TitleRepository {
         return result;
     }
 
+    @Override
+    public TitleCore insertTitle(String primaryTitle, String originalTitle, String titleType,
+                                 Integer startYear, Integer endYear, Integer runtimeMinutes, List<String> genres) {
+        String sql = """
+                INSERT INTO title_basics (tconst, primary_title, original_title, title_type,
+                                          start_year, end_year, runtime_minutes, genres)
+                VALUES (nextval('title_id_seq'), :primaryTitle, :originalTitle, :titleType,
+                        :startYear, :endYear, :runtimeMinutes, :genres)
+                RETURNING tconst
+                """;
+        var params = new MapSqlParameterSource()
+                .addValue("primaryTitle", primaryTitle).addValue("originalTitle", originalTitle)
+                .addValue("titleType", titleType).addValue("startYear", startYear)
+                .addValue("endYear", endYear).addValue("runtimeMinutes", runtimeMinutes)
+                .addValue("genres", genres.toArray(new String[0]), java.sql.Types.ARRAY, "text");
+        int tconst = jdbc.queryForObject(sql, params, Integer.class);
+        return findCore(tconst).orElseThrow();
+    }
+
+    @Override
+    public WriteResult updateTitle(
+            int tconst, String primaryTitle, String originalTitle, String titleType,
+            Integer startYear, Integer endYear, Integer runtimeMinutes, List<String> genres, int expectedVersion) {
+        if (findCore(tconst).isEmpty()) {
+            return WriteResult.NOT_FOUND;
+        }
+        String sql = """
+                UPDATE title_basics
+                SET primary_title = :primaryTitle, original_title = :originalTitle, title_type = :titleType,
+                    start_year = :startYear, end_year = :endYear, runtime_minutes = :runtimeMinutes,
+                    genres = :genres, version = version + 1
+                WHERE tconst = :tconst AND version = :expectedVersion AND deleted_at IS NULL
+                """;
+        var params = new MapSqlParameterSource()
+                .addValue("primaryTitle", primaryTitle).addValue("originalTitle", originalTitle)
+                .addValue("titleType", titleType).addValue("startYear", startYear)
+                .addValue("endYear", endYear).addValue("runtimeMinutes", runtimeMinutes)
+                .addValue("genres", genres.toArray(new String[0]), java.sql.Types.ARRAY, "text")
+                .addValue("tconst", tconst).addValue("expectedVersion", expectedVersion);
+        return jdbc.update(sql, params) == 0
+                ? WriteResult.VERSION_CONFLICT
+                : WriteResult.SUCCESS;
+    }
+
+    @Override
+    public WriteResult softDeleteTitle(int tconst) {
+        if (findCore(tconst).isEmpty()) {
+            return WriteResult.NOT_FOUND;
+        }
+        jdbc.update("UPDATE title_basics SET deleted_at = now() WHERE tconst = :tconst", Map.of("tconst", tconst));
+        return WriteResult.SUCCESS;
+    }
+
+    @Override
+    public WriteResult upsertCrew(
+            int tconst, List<Integer> directorIds, List<Integer> writerIds) {
+        if (findCore(tconst).isEmpty()) {
+            return WriteResult.NOT_FOUND;
+        }
+        String sql = """
+                INSERT INTO title_crew (tconst, directors, writers)
+                VALUES (:tconst, :directors, :writers)
+                ON CONFLICT (tconst) DO UPDATE SET directors = :directors, writers = :writers, version = title_crew.version + 1
+                """;
+        var params = new MapSqlParameterSource()
+                .addValue("tconst", tconst)
+                .addValue("directors", directorIds.toArray(new Integer[0]), java.sql.Types.ARRAY, "integer")
+                .addValue("writers", writerIds.toArray(new Integer[0]), java.sql.Types.ARRAY, "integer");
+        jdbc.update(sql, params);
+        return WriteResult.SUCCESS;
+    }
+
+    @Override
+    public WriteResult upsertRating(int tconst, double averageRating, int numVotes) {
+        if (findCore(tconst).isEmpty()) {
+            return WriteResult.NOT_FOUND;
+        }
+        String sql = """
+                INSERT INTO title_ratings (tconst, average_rating, num_votes)
+                VALUES (:tconst, :averageRating, :numVotes)
+                ON CONFLICT (tconst) DO UPDATE SET average_rating = :averageRating, num_votes = :numVotes,
+                                                    version = title_ratings.version + 1, deleted_at = NULL
+                """;
+        var params = new MapSqlParameterSource()
+                .addValue("tconst", tconst).addValue("averageRating", averageRating).addValue("numVotes", numVotes);
+        jdbc.update(sql, params);
+        return WriteResult.SUCCESS;
+    }
+
+    @Override
+    public WriteResult deleteRating(int tconst) {
+        int updated = jdbc.update(
+                "UPDATE title_ratings SET deleted_at = now() WHERE tconst = :tconst AND deleted_at IS NULL",
+                Map.of("tconst", tconst));
+        return updated == 0
+                ? WriteResult.NOT_FOUND
+                : WriteResult.SUCCESS;
+    }
+
     private List<CreditedPerson> findCrew(int tconst, String column) {
         // column is only ever "directors" or "writers" below - both fixed internal literals, never
         // user input - so string-formatting it into the SQL here isn't an injection risk. Bind
@@ -187,7 +287,7 @@ public class JdbcTitleRepository implements TitleRepository {
                 (Integer) rs.getObject("start_year"), (Integer) rs.getObject("end_year"),
                 (Integer) rs.getObject("runtime_minutes"), genres,
                 avgRating == null ? null : avgRating.doubleValue(),
-                (Integer) rs.getObject("num_votes"));
+                (Integer) rs.getObject("num_votes"), rs.getInt("version"));
     }
 
     private static CastMember mapCastMember(ResultSet rs, int rowNum) throws SQLException {
