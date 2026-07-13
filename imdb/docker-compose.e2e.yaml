@@ -59,6 +59,9 @@ services:
       SPRING_DATA_REDIS_PORT: "6379"
       # No tracing/metrics export configured - the e2e stage only needs the app + its data stores,
       # not the full observability stack (that's exercised separately, LLD §7/§8).
+      JWT_SECRET: "e2e-test-only-secret-not-for-real-deployments-32bytes-plus"
+      IMDB_BOOTSTRAP_ADMIN_EMAIL: "admin@imdb.local"
+      IMDB_BOOTSTRAP_ADMIN_PASSWORD: "e2e-test-admin-password"
     depends_on:
       postgres:
         condition: service_healthy

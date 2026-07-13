@@ -947,3 +947,52 @@ choice to run, not something to trigger incidentally:
   compiler-enforced instead of convention-enforced - not done now since a 4-module split is disproportionate
   to this project's actual size, but the package structure is already shaped to make that split
   mechanical later if it's ever worth it.
+
+## 12. CRUD Expansion
+
+Extends the read-only API above into a full CRUD service, in two layers: JWT auth plus admin CRUD over
+the core IMDb entities (titles/people/cast-crew), and a new user-generated-content layer (watchlists/
+reviews/custom lists) built on top of it. Full rationale, endpoint tables, and the negative-case
+contract (403 vs 404 vs 409) live in `docs/crud-expansion-design.md`; this section summarizes what was
+actually built and verified.
+
+- **Auth**: stateless JWT (`JJWT` 0.12.6, `HS384`), issued by `POST /api/v1/auth/register`/`login`,
+  renewed via `POST /api/v1/auth/refresh`. `JwtAuthenticationFilter` (registered as a `@Bean` inside
+  `SecurityConfig`, not `@Component`-scanned, so `@WebMvcTest` slices never accidentally construct it)
+  populates the `SecurityContext`; `@PreAuthorize("hasRole('ADMIN')")` gates every admin write.
+  `BootstrapAdminRunner` creates a single admin account from `IMDB_BOOTSTRAP_ADMIN_EMAIL`/`_PASSWORD` on
+  startup when both are set, so a fresh environment always has one admin able to promote others.
+  `@PreAuthorize` denials and filter-level `.anyRequest().authenticated()` denials are two genuinely
+  distinct Spring Security code paths - the former surfaces inside `DispatcherServlet`'s own exception
+  resolution, the latter through `ExceptionTranslationFilter` - both need their own handler
+  (`ApiExceptionHandler`'s `AccessDeniedException` mapping and `ProblemDetailAccessDeniedHandler`
+  respectively) or one of the two silently falls through to a bare 500.
+- **Versioning and soft delete**: every writable table gained `version INTEGER NOT NULL DEFAULT 0` and
+  `deleted_at TIMESTAMPTZ` (migrations `V7`-`V10`). Writes use optimistic locking - an `UPDATE ... WHERE
+  id = :id AND version = :expectedVersion` that affects 0 rows is reported as `WriteResult.VERSION_CONFLICT`
+  and surfaced as `409`, distinguishing it from a genuine `404` at the repository boundary rather than
+  each use case re-deriving that distinction. Reads filter `deleted_at IS NULL`; historical references
+  (cast/crew credits pointing at a soft-deleted title or person) deliberately do not, so deleting a title
+  doesn't retroactively break someone else's existing credit record.
+- **Admin-writable-row id sequences**: `title_id_seq`/`person_id_seq` (`V6`) let admin-created titles and
+  people get ids from the same numeric space as the imported IMDb dataset without colliding with it -
+  seeded to start above the highest imported id in production (where the full `abanda/imdb-postgresql`
+  import completes before `imdb-service`'s own migrations ever run) and, in Testcontainers tests where
+  that ordering is reversed, advanced explicitly via `setval()` at the end of the shared fixture file.
+- **Cache eviction per region** (`CacheConfig`'s four regions, §6): `title-detail` and `six-degrees` are
+  evicted precisely by key on any write that affects that exact title or person/co-star-path.
+  `top-rated` has no cheap per-write key to target (arbitrary `genre:limit:minVotes` combinations), so an
+  admin rating write clears the whole region (`allEntries = true`) instead - accepted as an infrequent,
+  cheap operation rather than defeating the cache on every title write. `title-search` accepts a bounded
+  15-minute staleness window instead of eviction, for the same reason. Verified against real Redis, not
+  just the `@CacheEvict` annotations, by `CacheEvictionIntegrationTest`.
+- **User-generated content**: watchlists, reviews, and custom lists all share one ownership/visibility
+  rule, applied consistently rather than ad hoc per resource - viewing a `PRIVATE` resource you don't own
+  is `404` (existence hidden), writing to a resource you don't own is `403` if it's `PUBLIC` (existence
+  already visible, only the action is denied) and `404` if it's `PRIVATE`. `TitleDetail` gained
+  `userRatingAverage`/`userRatingCount`, aggregated from `reviews` alongside the original IMDb rating.
+- **Verification**: 43 test classes across Surefire (unit) and Failsafe (Testcontainers integration,
+  including the four pre-existing Redis-Testcontainers cache tests plus the new `CacheEvictionIntegrationTest`)
+  all green, plus the Postman/Newman e2e collection (§10.3) extended with the full auth flow, a
+  create/stale-update/403 admin-write lifecycle, and one write-then-view lifecycle per new resource -
+  verified against a live `docker-compose.e2e.yaml` stack, 19 requests / 32 assertions passing.

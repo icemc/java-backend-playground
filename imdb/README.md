@@ -19,6 +19,7 @@ A production-shaped Spring Boot REST API over the full [IMDb Non-Commercial Data
   - [Six Degrees of Kevin Bacon](#six-degrees-of-kevin-bacon)
   - [Caching strategy](#caching-strategy)
 - [API](#api)
+- [Authentication](#authentication)
 - [Observability](#observability)
 - [External services](#external-services)
 - [Testing strategy](#testing-strategy)
@@ -140,6 +141,27 @@ All TTLs are long because the dataset only changes on image reload; there is no 
 
 All errors are RFC 7807 `ProblemDetail` (404 for unknown IDs, 400 for malformed IDs/out-of-range `maxDegree`/missing params, 405 for the wrong HTTP method). Full contracts, request/response shapes, and error handling: [`docs/low-level-design.md`](docs/low-level-design.md) §4/§9.
 
+Beyond the original read-only endpoints above, a later CRUD expansion (`docs/crud-expansion-design.md`) added admin write access over the core entities and a user-generated-content layer, all under JWT auth ([Authentication](#authentication)):
+
+| Group | Endpoints | Notes |
+|---|---|---|
+| Admin: titles | `POST/PUT/PATCH/DELETE /api/v1/titles`, `PUT /api/v1/titles/{titleId}/crew`, `PUT/DELETE /api/v1/titles/{titleId}/rating`, full CRUD on `/api/v1/titles/{titleId}/principals` | `hasRole('ADMIN')`; optimistic locking via a `version` field, `409` on conflict |
+| Admin: people | `POST/PUT/PATCH/DELETE /api/v1/people` | `hasRole('ADMIN')`, same versioning convention |
+| Watchlist | `GET/PUT /api/v1/watchlist`, `POST/DELETE /api/v1/watchlist/items{,/{titleId}}`, `GET /api/v1/users/{userId}/watchlist` | One per user; `PRIVATE` by default |
+| Reviews | Full CRUD under `/api/v1/titles/{titleId}/reviews`, plus `GET /api/v1/users/{userId}/reviews` | One review per `(user, title)`; feeds `userRatingAverage`/`userRatingCount` on title detail |
+| Custom lists | Full CRUD under `/api/v1/lists`, plus `GET /api/v1/lists/public` | `PUBLIC`/`PRIVATE` visibility; viewing someone else's `PRIVATE` resource is `404`, writing to their `PUBLIC` one is `403` |
+
+Full endpoint tables and the exact negative-case contract (403 vs. 404 vs. 409) per resource: [`docs/crud-expansion-design.md`](docs/crud-expansion-design.md) §4/§5.
+
+## Authentication
+
+Stateless JWT, issued and verified by `infrastructure.security` (`JwtService`, `JwtAuthenticationFilter`, `SecurityConfig`):
+
+- `POST /api/v1/auth/register` / `POST /api/v1/auth/login` return an access token and a refresh token; `POST /api/v1/auth/refresh` exchanges a valid refresh token for a new pair.
+- Every admin-write endpoint is gated `@PreAuthorize("hasRole('ADMIN')")`; every user-content write endpoint requires an authenticated user, resolved from the JWT's subject claim (`infrastructure.security.CurrentUser`).
+- A fresh environment has no admin account by default. Setting `IMDB_BOOTSTRAP_ADMIN_EMAIL`/`IMDB_BOOTSTRAP_ADMIN_PASSWORD` (both `docker-compose.yaml` and `docker-compose.e2e.yaml`) makes `BootstrapAdminRunner` create exactly one `ADMIN` account on startup, if one doesn't already exist - the only way to get a first admin without direct database access.
+- `JWT_SECRET` must be set (no default) for the application to start; test/e2e environments use a fixed, clearly-non-production value (Maven Surefire/Failsafe `environmentVariables`, `docker-compose.e2e.yaml`).
+
 ## Observability
 
 - **Metrics**: `micrometer-registry-prometheus`. Default HTTP (`http.server.requests`, with percentile-histogram buckets enabled) and JVM/process metrics via Boot's auto-configuration. Cache hit/miss/put counters per region are **manually** bound (`infrastructure.cache.CacheConfig`) via Spring Data Redis's own `RedisCacheWriter` statistics. Spring Boot 4.1 dropped its Boot-2/3-era automatic cache-metrics binding entirely (confirmed by decompiling the actual jar), so this design replicates it rather than relying on a feature that no longer exists.
@@ -184,9 +206,9 @@ Three tiers, matching three sequential CI jobs (`unit` → `integration` → `e2
 |---|---|---|
 | **Unit** (`mvn test`, Surefire) | JUnit 5 + Mockito + AssertJ | `application`-layer use cases against mocked `domain.repository` interfaces (no Spring, no Docker); `infrastructure.cache` decorators against a mocked delegate; this verifies delegation behavior but **cannot** catch real (de)serialization bugs, since nothing is actually serialized. |
 | **Integration** (`mvn failsafe:integration-test failsafe:verify`, Failsafe) | Testcontainers (Postgres + Redis) | `infrastructure.persistence` against real Postgres (Flyway-migrated, shared fixture data). Four cache integration tests wired against a **real Redis**; this tier exists specifically because a real Redis is the only place a serialization bug (like an earlier `GenericJacksonJsonRedisSerializer` type-metadata bug this project hit) actually surfaces. |
-| **E2E / contract** (Postman + Newman) | `docker-compose.e2e.yaml`, a fully-built app image against plain `postgres:17` + Redis | The only tier exercising the real `Dockerfile` image end-to-end, including the logging filter and exception handler wiring. Seeded with the *same* fixture dataset the integration tests use, one source of truth, not two to keep in sync. Nine requests, 22 assertions, covering every endpoint and its documented edge cases. |
+| **E2E / contract** (Postman + Newman) | `docker-compose.e2e.yaml`, a fully-built app image against plain `postgres:17` + Redis | The only tier exercising the real `Dockerfile` image end-to-end, including the logging filter and exception handler wiring. Seeded with the *same* fixture dataset the integration tests use, one source of truth, not two to keep in sync. 19 requests, 32 assertions, covering every endpoint (including the CRUD-expansion auth/admin-write/user-content flows) and its documented edge cases. |
 
-Current counts: 32 unit tests, 22 integration tests, all passing; e2e collection verified 22/22 assertions against a live stack.
+Current counts: 90 unit tests, 69 integration tests, all passing; e2e collection verified 32/32 assertions against a live stack.
 
 Full test plan, including exactly why each tier exists and what it catches that the others can't: [`docs/low-level-design.md`](docs/low-level-design.md) §10.
 
@@ -254,12 +276,13 @@ imdb/
 - [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md): the original brief and guidelines
 - [`docs/product-design.md`](docs/product-design.md): what is being built and why, including algorithm alternatives considered
 - [`docs/low-level-design.md`](docs/low-level-design.md): schema, endpoint contracts, the bidirectional-BFS derivation, caching, observability wiring, and the full test plan
+- [`docs/crud-expansion-design.md`](docs/crud-expansion-design.md): the JWT auth layer, admin CRUD over the core entities, and the watchlist/reviews/lists user-content layer added after the initial read-only API
 
 ## Known limitations
 
 - Under k6 load, six-degrees requests initially failed 83% of the time against a missing index (`title_principals.nconst` had only a partial, actor-only index: every path-enrichment call fell back to a parallel sequential scan over the 100M-row table). Adding a full index (`V4__title_principals_nconst_index.sql`) brought that down substantially, but a persistent ~25-30% failure rate remains for genuinely hard pairs (large hub actors reached mid-expansion with no intersection yet). Raising the query timeout doesn't help; it just fails slower instead of failing fast, so this is tracked as an open follow-up rather than solved by a timeout knob (`application.yaml`, `six-degrees.query-timeout-seconds`).
 - `title_akas` (localized alternate titles) and `title_episode` (TV episode hierarchy) are loaded but not surfaced by any endpoint.
-- No authentication/authorization: this is a read-only public API for the purposes of this exercise.
+- No rate limiting on any endpoint (including auth), and no email verification or password reset flow - both are infra/product concerns deliberately scoped out of the CRUD expansion, not oversights; see [`docs/crud-expansion-design.md`](docs/crud-expansion-design.md) §11 for the full deferred list.
 - Swagger/OpenAPI UI is deferred: `springdoc-openapi`'s Initializr `versionRange` doesn't yet cover Spring Boot 4.1.
 
 Full list, including deferred design alternatives (Pruned Landmark Labeling, a dedicated graph database): [`docs/product-design.md`](docs/product-design.md) §11/§12.
