@@ -3,9 +3,11 @@ package com.ludovictemgoua.imdb.presentation;
 import com.ludovictemgoua.imdb.application.PathStep;
 import com.ludovictemgoua.imdb.application.PersonRef;
 import com.ludovictemgoua.imdb.application.SixDegreesResult;
+import com.ludovictemgoua.imdb.application.contracts.PersonAdminUseCase;
 import com.ludovictemgoua.imdb.application.contracts.SixDegreesOutcome;
 import com.ludovictemgoua.imdb.application.contracts.SixDegreesUseCase;
 import com.ludovictemgoua.imdb.domain.model.PersonCandidate;
+import com.ludovictemgoua.imdb.domain.model.PersonCore;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -14,8 +16,11 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -27,6 +32,8 @@ class PersonControllerTest {
     MockMvc mockMvc;
     @MockitoBean
     SixDegreesUseCase sixDegreesUseCase;
+    @MockitoBean
+    PersonAdminUseCase personAdminUseCase;
 
     @Test
     void rejectsMaxDegreeAboveSeven() throws Exception {
@@ -77,5 +84,31 @@ class PersonControllerTest {
                         .param("personA", "Nobody")
                         .param("personB", "nm0000158"))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void createPersonRequiresAdminRole() throws Exception {
+        mockMvc.perform(post("/api/v1/people")
+                        .with(user("1").roles("USER"))
+                        .contentType("application/json")
+                        .content("""
+                                {"primaryName":"New Person","primaryProfession":[]}
+                                """))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void createPersonSucceedsForAdmin() throws Exception {
+        var created = new PersonCore("nm0000011", "New Person", null, null, List.of(), 0);
+        given(personAdminUseCase.create(any())).willReturn(created);
+
+        mockMvc.perform(post("/api/v1/people")
+                        .with(user("1").roles("ADMIN"))
+                        .contentType("application/json")
+                        .content("""
+                                {"primaryName":"New Person","primaryProfession":[]}
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").value("nm0000011"));
     }
 }

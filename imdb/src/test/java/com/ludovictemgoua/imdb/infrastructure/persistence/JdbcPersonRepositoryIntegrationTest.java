@@ -1,6 +1,8 @@
 package com.ludovictemgoua.imdb.infrastructure.persistence;
 
 import com.ludovictemgoua.imdb.TestcontainersConfiguration;
+import com.ludovictemgoua.imdb.domain.repository.WriteResult;
+import com.ludovictemgoua.imdb.utils.ImdbIds;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -61,5 +63,53 @@ class JdbcPersonRepositoryIntegrationTest {
         jdbc.update("UPDATE name_basics SET deleted_at = now() WHERE nconst = 1");
 
         assertThat(repository.findByName("Kevin Bacon")).isEmpty();
+    }
+
+    @Test
+    void insertPersonThenFindCoreRoundTrips() {
+        var created = repository.insertPerson("Ada Lovelace", 1815, 1852, List.of("mathematician"));
+
+        var found = repository.findCore(ImdbIds.parsePersonId(created.id())).orElseThrow();
+
+        assertThat(found.primaryName()).isEqualTo("Ada Lovelace");
+        assertThat(found.version()).isEqualTo(0);
+    }
+
+    @Test
+    void insertedPersonIdIsAboveTheSeededRange() {
+        var created = repository.insertPerson("New Person", null, null, List.of());
+
+        assertThat(ImdbIds.parsePersonId(created.id())).isGreaterThan(10);
+    }
+
+    @Test
+    void updatePersonBumpsVersionAndPersists() {
+        var created = repository.insertPerson("Old Name", null, null, List.of());
+        int nconst = ImdbIds.parsePersonId(created.id());
+
+        var result = repository.updatePerson(nconst, "New Name", 1990, null, List.of("actor"), created.version());
+
+        assertThat(result).isEqualTo(WriteResult.SUCCESS);
+        assertThat(repository.findCore(nconst).orElseThrow().primaryName()).isEqualTo("New Name");
+    }
+
+    @Test
+    void updatePersonReturnsVersionConflictOnStaleVersion() {
+        var created = repository.insertPerson("Stale", null, null, List.of());
+        int nconst = ImdbIds.parsePersonId(created.id());
+
+        var result = repository.updatePerson(nconst, "New Name", null, null, List.of(), created.version() + 1);
+
+        assertThat(result).isEqualTo(WriteResult.VERSION_CONFLICT);
+    }
+
+    @Test
+    void softDeletePersonExcludesThemFromFindCore() {
+        var created = repository.insertPerson("Delete Me", null, null, List.of());
+        int nconst = ImdbIds.parsePersonId(created.id());
+
+        repository.softDeletePerson(nconst);
+
+        assertThat(repository.findCore(nconst)).isEmpty();
     }
 }
