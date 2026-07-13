@@ -38,13 +38,13 @@ public class JdbcTitleRepository implements TitleRepository {
         String dataSql = """
                 SELECT tconst, primary_title, original_title, title_type, start_year, end_year
                 FROM title_basics
-                WHERE primary_title % :query OR original_title % :query
+                WHERE (primary_title % :query OR original_title % :query) AND deleted_at IS NULL
                 ORDER BY similarity(primary_title, :query) DESC
                 LIMIT :limit OFFSET :offset
                 """;
         String countSql = """
                 SELECT count(*) FROM title_basics
-                WHERE primary_title % :query OR original_title % :query
+                WHERE (primary_title % :query OR original_title % :query) AND deleted_at IS NULL
                 """;
         var params = new MapSqlParameterSource()
                 .addValue("query", query)
@@ -67,8 +67,8 @@ public class JdbcTitleRepository implements TitleRepository {
                        tb.start_year, tb.end_year, tb.runtime_minutes, tb.genres,
                        tr.average_rating, tr.num_votes
                 FROM title_basics tb
-                LEFT JOIN title_ratings tr ON tr.tconst = tb.tconst
-                WHERE tb.tconst = :tconst
+                LEFT JOIN title_ratings tr ON tr.tconst = tb.tconst AND tr.deleted_at IS NULL
+                WHERE tb.tconst = :tconst AND tb.deleted_at IS NULL
                 """;
         return jdbc.query(sql, Map.of("tconst", tconst), JdbcTitleRepository::mapCore).stream().findFirst();
     }
@@ -115,6 +115,7 @@ public class JdbcTitleRepository implements TitleRepository {
                     WHERE tb.title_type = 'movie'
                       AND genres_as_text(tb.genres) @> ARRAY[:genre]::text[]
                       AND tr.num_votes >= :minVotes
+                      AND tb.deleted_at IS NULL AND tr.deleted_at IS NULL
                 ),
                 stats AS (SELECT AVG(average_rating) AS mean_rating FROM pool)
                 SELECT p.tconst, p.primary_title, p.start_year, p.average_rating, p.num_votes,

@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.jdbc.Sql;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,6 +19,8 @@ class JdbcTitleRepositoryIntegrationTest {
 
     @Autowired
     JdbcTitleRepository repository;
+    @Autowired
+    JdbcTemplate jdbc;
 
     @Test
     void searchFindsATitleByFuzzyPrimaryTitleMatch() {
@@ -75,5 +78,19 @@ class JdbcTitleRepositoryIntegrationTest {
         var topRated = repository.findTopRated("Action", 10, 100);
 
         assertThat(topRated).extracting("id").startsWith("tt0000200", "tt0000201");
+    }
+
+    @Test
+    void findCoreExcludesASoftDeletedTitle() {
+        jdbc.update("UPDATE title_basics SET deleted_at = now() WHERE tconst = 100");
+
+        assertThat(repository.findCore(100)).isEmpty();
+    }
+
+    @Test
+    void searchExcludesASoftDeletedTitle() {
+        jdbc.update("UPDATE title_basics SET deleted_at = now() WHERE tconst = 100");
+
+        assertThat(repository.search("Few Good Men", 0, 20).content()).extracting("id").doesNotContain("tt0000100");
     }
 }

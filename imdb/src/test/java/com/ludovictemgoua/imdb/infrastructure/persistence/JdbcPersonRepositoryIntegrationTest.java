@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.jdbc.Sql;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,6 +21,8 @@ class JdbcPersonRepositoryIntegrationTest {
 
     @Autowired
     JdbcPersonRepository repository;
+    @Autowired
+    JdbcTemplate jdbc;
 
     @Test
     void findByNameReturnsBothPeopleSharingAName() {
@@ -51,5 +54,12 @@ class JdbcPersonRepositoryIntegrationTest {
 
         assertThat(names).containsEntry(1, "Kevin Bacon").containsEntry(6, "Tom Hanks");
         assertThat(names).doesNotContainKey(987654);
+    }
+
+    @Test
+    void findByNameExcludesASoftDeletedPerson() {
+        jdbc.update("UPDATE name_basics SET deleted_at = now() WHERE nconst = 1");
+
+        assertThat(repository.findByName("Kevin Bacon")).isEmpty();
     }
 }

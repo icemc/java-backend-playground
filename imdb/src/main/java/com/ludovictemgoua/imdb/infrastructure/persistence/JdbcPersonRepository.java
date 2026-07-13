@@ -35,7 +35,7 @@ public class JdbcPersonRepository implements PersonRepository {
         String sql = """
                 SELECT nconst, primary_name, birth_year, known_for_titles
                 FROM name_basics
-                WHERE primary_name % :name
+                WHERE primary_name % :name AND deleted_at IS NULL
                 ORDER BY similarity(primary_name, :name) DESC
                 LIMIT 10
                 """;
