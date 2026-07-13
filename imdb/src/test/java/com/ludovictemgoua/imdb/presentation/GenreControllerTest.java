@@ -4,6 +4,7 @@ import com.ludovictemgoua.imdb.application.contracts.TopRatedUseCase;
 import com.ludovictemgoua.imdb.domain.model.GenreTopRatedItem;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -17,7 +18,11 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+// This endpoint is permanently public/read-only (no admin CRUD is planned for genres), so the
+// security filter chain isn't relevant here - disabling filters avoids needing to wire the whole
+// security stack into a slice that will never test authorization behavior.
 @WebMvcTest(GenreController.class)
+@AutoConfigureMockMvc(addFilters = false)
 class GenreControllerTest {
 
     @Autowired

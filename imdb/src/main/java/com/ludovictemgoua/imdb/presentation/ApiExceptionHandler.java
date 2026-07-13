@@ -1,11 +1,14 @@
 package com.ludovictemgoua.imdb.presentation;
 
+import com.ludovictemgoua.imdb.domain.exception.ConflictException;
+import com.ludovictemgoua.imdb.domain.exception.ForbiddenException;
 import com.ludovictemgoua.imdb.domain.exception.NotFoundException;
 import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
@@ -48,6 +51,33 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     public ProblemDetail handleConstraintViolation(ConstraintViolationException ex) {
         log.debug("bad request: {}", ex.getMessage());
         return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
+    }
+
+    @ExceptionHandler(ConflictException.class)
+    public ProblemDetail handleConflict(ConflictException ex) {
+        log.debug("conflict: {}", ex.getMessage());
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+    }
+
+    @ExceptionHandler(ForbiddenException.class)
+    public ProblemDetail handleForbidden(ForbiddenException ex) {
+        log.debug("forbidden: {}", ex.getMessage());
+        return ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, ex.getMessage());
+    }
+
+    // @PreAuthorize denials (AuthorizationDeniedException extends this) are thrown from inside the
+    // controller method invocation itself - AOP method-security interception happens well past the
+    // security filter chain's ExceptionTranslationFilter, deep inside DispatcherServlet's own
+    // handler dispatch. That means they flow through Spring MVC's normal @ExceptionHandler
+    // resolution, same as any other controller exception - without this handler, the bare
+    // Exception.class catch-all below caught them first and turned a correct 403 into a spurious 500
+    // (confirmed empirically: AuthorizationDeniedException logged as "unexpected error"). This is a
+    // distinct code path from ProblemDetailAccessDeniedHandler, which only ever fires for
+    // filter-level denials (the plain .anyRequest().authenticated() rule) - both are needed.
+    @ExceptionHandler(AccessDeniedException.class)
+    public ProblemDetail handleAccessDenied(AccessDeniedException ex) {
+        log.debug("access denied: {}", ex.getMessage());
+        return ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, "You do not have permission to perform this action");
     }
 
     // Catch-all for anything not already handled above - without this, an unexpected failure (a bug,

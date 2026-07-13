@@ -82,6 +82,19 @@ six-degrees:
 top-rated:
   default-min-votes: 1000
 
+imdb:
+  jwt:
+    # No default - must be set via the JWT_SECRET env var (>= 32 bytes for HS256). Deliberately
+    # absent here rather than defaulted to something committed, since this signs every access/
+    # refresh token. Maven Surefire/Failsafe set a fixed test-only value for all test runs (pom.xml).
+    secret: ${JWT_SECRET}
+  bootstrap-admin:
+    # No defaults for either - a fresh stack with neither set simply never gets an admin account,
+    # which is the safe failure mode (an operator has to deliberately opt in), rather than shipping
+    # a guessable default admin password.
+    email: ${IMDB_BOOTSTRAP_ADMIN_EMAIL:}
+    password: ${IMDB_BOOTSTRAP_ADMIN_PASSWORD:}
+
 logging:
   structured:
     format:

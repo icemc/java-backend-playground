@@ -56,6 +56,10 @@
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-security</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-validation</artifactId>
 		</dependency>
 		<dependency>
@@ -75,6 +79,23 @@
 		<dependency>
 			<groupId>org.postgresql</groupId>
 			<artifactId>postgresql</artifactId>
+			<scope>runtime</scope>
+		</dependency>
+		<dependency>
+			<groupId>io.jsonwebtoken</groupId>
+			<artifactId>jjwt-api</artifactId>
+			<version>0.12.6</version>
+		</dependency>
+		<dependency>
+			<groupId>io.jsonwebtoken</groupId>
+			<artifactId>jjwt-impl</artifactId>
+			<version>0.12.6</version>
+			<scope>runtime</scope>
+		</dependency>
+		<dependency>
+			<groupId>io.jsonwebtoken</groupId>
+			<artifactId>jjwt-jackson</artifactId>
+			<version>0.12.6</version>
 			<scope>runtime</scope>
 		</dependency>
 		<dependency>
@@ -100,6 +121,11 @@
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-opentelemetry-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-security-test</artifactId>
 			<scope>test</scope>
 		</dependency>
 		<dependency>
@@ -153,6 +179,15 @@
 						<exclude>**/*IntegrationTest.java</exclude>
 						<exclude>**/ImdbApplicationTests.java</exclude>
 					</excludes>
+					<!-- Fixed test-only secret so JwtService resolves imdb.jwt.secret (${JWT_SECRET})
+					     without needing a real deployment secret - main resources never default this
+					     property, on purpose. A src/test/resources/application.yaml override was tried
+					     first and rejected: Spring Boot doesn't merge it with the main application.yaml,
+					     it fully replaces it, which silently broke every other property (six-degrees.*,
+					     top-rated.*, ...) for any test building the full context. -->
+					<environmentVariables>
+						<JWT_SECRET>test-only-secret-not-for-real-deployments-32bytes-plus</JWT_SECRET>
+					</environmentVariables>
 				</configuration>
 			</plugin>
 			<!-- mvn verify -> unit (Surefire, above) then integration (Failsafe, here) - Testcontainers
@@ -166,6 +201,9 @@
 						<include>**/*IntegrationTest.java</include>
 						<include>**/ImdbApplicationTests.java</include>
 					</includes>
+					<environmentVariables>
+						<JWT_SECRET>test-only-secret-not-for-real-deployments-32bytes-plus</JWT_SECRET>
+					</environmentVariables>
 				</configuration>
 				<executions>
 					<execution>

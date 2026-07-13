@@ -76,6 +76,9 @@ services:
       MANAGEMENT_TRACING_SAMPLING_PROBABILITY: "1.0"
       BACON_PERSON_NAME: "Kevin Bacon"
       SIX_DEGREES_MAX_DEPTH: "7"
+      JWT_SECRET: "local-dev-only-secret-change-in-real-deployments-32bytes+"
+      IMDB_BOOTSTRAP_ADMIN_EMAIL: "admin@imdb.local"
+      IMDB_BOOTSTRAP_ADMIN_PASSWORD: "change-me-please"
     depends_on:
       postgres:
         condition: service_healthy
