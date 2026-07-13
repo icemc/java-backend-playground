@@ -4,6 +4,7 @@ import com.ludovictemgoua.imdb.domain.model.CastMember;
 import com.ludovictemgoua.imdb.domain.model.CreditedPerson;
 import com.ludovictemgoua.imdb.domain.model.GenreTopRatedItem;
 import com.ludovictemgoua.imdb.domain.model.PagedResult;
+import com.ludovictemgoua.imdb.domain.model.PrincipalCredit;
 import com.ludovictemgoua.imdb.domain.model.SharedTitle;
 import com.ludovictemgoua.imdb.domain.model.TitleCore;
 import com.ludovictemgoua.imdb.domain.model.TitleSummary;
@@ -255,6 +256,60 @@ public class JdbcTitleRepository implements TitleRepository {
                 : WriteResult.SUCCESS;
     }
 
+    @Override
+    public List<PrincipalCredit> findAllPrincipals(int tconst) {
+        String sql = """
+                SELECT tp.nconst, nb.primary_name, tp.category, tp.job, tp.characters, tp.ordering, tp.version
+                FROM title_principals tp
+                JOIN name_basics nb ON nb.nconst = tp.nconst
+                WHERE tp.tconst = :tconst AND tp.deleted_at IS NULL
+                ORDER BY tp.ordering
+                """;
+        return jdbc.query(sql, Map.of("tconst", tconst), JdbcTitleRepository::mapPrincipal);
+    }
+
+    @Override
+    public WriteResult insertPrincipal(int tconst, int personId, String category, String job,
+                                       List<String> characters, int ordering) {
+        if (findCore(tconst).isEmpty()) {
+            return WriteResult.NOT_FOUND;
+        }
+        String sql = """
+                INSERT INTO title_principals (tconst, ordering, nconst, category, job, characters)
+                VALUES (:tconst, :ordering, :nconst, :category, :job, :characters)
+                """;
+        var params = new MapSqlParameterSource()
+                .addValue("tconst", tconst).addValue("ordering", ordering).addValue("nconst", personId)
+                .addValue("category", category).addValue("job", job)
+                .addValue("characters", characters.toArray(new String[0]), java.sql.Types.ARRAY, "text");
+        jdbc.update(sql, params);
+        return WriteResult.SUCCESS;
+    }
+
+    @Override
+    public WriteResult updatePrincipal(int tconst, int ordering, String category, String job,
+                                       List<String> characters, int expectedVersion) {
+        String sql = """
+                UPDATE title_principals
+                SET category = :category, job = :job, characters = :characters, version = version + 1
+                WHERE tconst = :tconst AND ordering = :ordering AND version = :expectedVersion AND deleted_at IS NULL
+                """;
+        var params = new MapSqlParameterSource()
+                .addValue("category", category).addValue("job", job)
+                .addValue("characters", characters.toArray(new String[0]), java.sql.Types.ARRAY, "text")
+                .addValue("tconst", tconst).addValue("ordering", ordering).addValue("expectedVersion", expectedVersion);
+        return jdbc.update(sql, params) == 0 ? WriteResult.VERSION_CONFLICT : WriteResult.SUCCESS;
+    }
+
+    @Override
+    public WriteResult softDeletePrincipal(int tconst, int ordering) {
+        var params = new MapSqlParameterSource().addValue("tconst", tconst).addValue("ordering", ordering);
+        int updated = jdbc.update(
+                "UPDATE title_principals SET deleted_at = now() WHERE tconst = :tconst AND ordering = :ordering AND deleted_at IS NULL",
+                params);
+        return updated == 0 ? WriteResult.NOT_FOUND : WriteResult.SUCCESS;
+    }
+
     private List<CreditedPerson> findCrew(int tconst, String column) {
         // column is only ever "directors" or "writers" below - both fixed internal literals, never
         // user input - so string-formatting it into the SQL here isn't an injection risk. Bind
@@ -306,5 +361,11 @@ public class JdbcTitleRepository implements TitleRepository {
     private static List<String> toStringList(Array sqlArray) throws SQLException {
         if (sqlArray == null) return List.of();
         return List.of((String[]) sqlArray.getArray());
+    }
+
+    private static PrincipalCredit mapPrincipal(ResultSet rs, int rowNum) throws SQLException {
+        return new PrincipalCredit(ImdbIds.formatPersonId(rs.getInt("nconst")), rs.getString("primary_name"),
+                rs.getString("category"), rs.getString("job"), toStringList(rs.getArray("characters")),
+                rs.getInt("ordering"), rs.getInt("version"));
     }
 }

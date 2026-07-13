@@ -63,4 +63,21 @@ class TitleAdminUseCaseImplTest {
 
         assertThatThrownBy(() -> useCase.delete("tt0000300")).isInstanceOf(NotFoundException.class);
     }
+
+    @Test
+    void addPrincipalDelegatesToInsertPrincipal() {
+        given(titleRepository.insertPrincipal(300, 1, "actor", null, List.of("Role"), 5))
+                .willReturn(WriteResult.SUCCESS);
+        var useCase = new TitleAdminUseCaseImpl(titleRepository);
+
+        useCase.addPrincipal("tt0000300", new PrincipalRequest("nm0000001", "actor", null, List.of("Role"), 5));
+    }
+
+    @Test
+    void deletePrincipalThrowsNotFoundWhenMissing() {
+        given(titleRepository.softDeletePrincipal(300, 5)).willReturn(WriteResult.NOT_FOUND);
+        var useCase = new TitleAdminUseCaseImpl(titleRepository);
+
+        assertThatThrownBy(() -> useCase.deletePrincipal("tt0000300", 5)).isInstanceOf(NotFoundException.class);
+    }
 }

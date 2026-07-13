@@ -3,12 +3,14 @@ package com.ludovictemgoua.imdb.presentation;
 import com.ludovictemgoua.imdb.application.CreateTitleRequest;
 import com.ludovictemgoua.imdb.application.CrewRequest;
 import com.ludovictemgoua.imdb.application.PatchTitleRequest;
+import com.ludovictemgoua.imdb.application.PrincipalRequest;
 import com.ludovictemgoua.imdb.application.RatingRequest;
 import com.ludovictemgoua.imdb.application.UpdateTitleRequest;
 import com.ludovictemgoua.imdb.application.contracts.TitleAdminUseCase;
 import com.ludovictemgoua.imdb.application.contracts.TitleDetailUseCase;
 import com.ludovictemgoua.imdb.application.contracts.TitleSearchUseCase;
 import com.ludovictemgoua.imdb.domain.model.PagedResult;
+import com.ludovictemgoua.imdb.domain.model.PrincipalCredit;
 import com.ludovictemgoua.imdb.domain.model.TitleCore;
 import com.ludovictemgoua.imdb.domain.model.TitleDetail;
 import com.ludovictemgoua.imdb.domain.model.TitleSummary;
@@ -30,6 +32,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1/titles")
@@ -103,5 +107,32 @@ public class TitleController {
     @PreAuthorize("hasRole('ADMIN')")
     public void deleteRating(@PathVariable String titleId) {
         titleAdminUseCase.deleteRating(titleId);
+    }
+
+    @GetMapping("/{titleId}/principals")
+    public List<PrincipalCredit> getAllPrincipals(@PathVariable String titleId) {
+        return titleAdminUseCase.getAllPrincipals(titleId);
+    }
+
+    @PostMapping("/{titleId}/principals")
+    @ResponseStatus(HttpStatus.CREATED)
+    @PreAuthorize("hasRole('ADMIN')")
+    public void addPrincipal(@PathVariable String titleId, @Valid @RequestBody PrincipalRequest request) {
+        titleAdminUseCase.addPrincipal(titleId, request);
+    }
+
+    @PutMapping("/{titleId}/principals/{ordering}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public void updatePrincipal(@PathVariable String titleId, @PathVariable int ordering,
+                                @Valid @RequestBody PrincipalRequest request,
+                                @RequestParam int expectedVersion) {
+        titleAdminUseCase.updatePrincipal(titleId, ordering, request, expectedVersion);
+    }
+
+    @DeleteMapping("/{titleId}/principals/{ordering}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @PreAuthorize("hasRole('ADMIN')")
+    public void deletePrincipal(@PathVariable String titleId, @PathVariable int ordering) {
+        titleAdminUseCase.deletePrincipal(titleId, ordering);
     }
 }

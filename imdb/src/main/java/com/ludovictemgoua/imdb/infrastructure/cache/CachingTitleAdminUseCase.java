@@ -3,15 +3,19 @@ package com.ludovictemgoua.imdb.infrastructure.cache;
 import com.ludovictemgoua.imdb.application.CreateTitleRequest;
 import com.ludovictemgoua.imdb.application.CrewRequest;
 import com.ludovictemgoua.imdb.application.PatchTitleRequest;
+import com.ludovictemgoua.imdb.application.PrincipalRequest;
 import com.ludovictemgoua.imdb.application.RatingRequest;
 import com.ludovictemgoua.imdb.application.TitleAdminUseCaseImpl;
 import com.ludovictemgoua.imdb.application.UpdateTitleRequest;
 import com.ludovictemgoua.imdb.application.contracts.TitleAdminUseCase;
+import com.ludovictemgoua.imdb.domain.model.PrincipalCredit;
 import com.ludovictemgoua.imdb.domain.model.TitleCore;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Caching;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Service;
+
+import java.util.List;
 
 // Precise title-detail eviction on any write affecting that title; a rating write also clears the
 // entire top-rated region (allEntries) since there's no cheap way to know which genre/limit/minVotes
@@ -73,5 +77,37 @@ public class CachingTitleAdminUseCase implements TitleAdminUseCase {
     })
     public void deleteRating(String titleId) {
         delegate.deleteRating(titleId);
+    }
+
+    @Override
+    public List<PrincipalCredit> getAllPrincipals(String titleId) {
+        return delegate.getAllPrincipals(titleId);
+    }
+
+    @Override
+    @Caching(evict = {
+            @CacheEvict(cacheNames = "title-detail", key = "#titleId"),
+            @CacheEvict(cacheNames = "six-degrees", allEntries = true)
+    })
+    public void addPrincipal(String titleId, PrincipalRequest request) {
+        delegate.addPrincipal(titleId, request);
+    }
+
+    @Override
+    @Caching(evict = {
+            @CacheEvict(cacheNames = "title-detail", key = "#titleId"),
+            @CacheEvict(cacheNames = "six-degrees", allEntries = true)
+    })
+    public void updatePrincipal(String titleId, int ordering, PrincipalRequest request, int expectedVersion) {
+        delegate.updatePrincipal(titleId, ordering, request, expectedVersion);
+    }
+
+    @Override
+    @Caching(evict = {
+            @CacheEvict(cacheNames = "title-detail", key = "#titleId"),
+            @CacheEvict(cacheNames = "six-degrees", allEntries = true)
+    })
+    public void deletePrincipal(String titleId, int ordering) {
+        delegate.deletePrincipal(titleId, ordering);
     }
 }

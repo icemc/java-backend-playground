@@ -160,4 +160,34 @@ class JdbcTitleRepositoryIntegrationTest {
         repository.deleteRating(tconst);
         assertThat(repository.findCore(tconst).orElseThrow().averageRating()).isNull();
     }
+
+    @Test
+    void insertPrincipalThenFindAllPrincipalsIncludesIt() {
+        var result = repository.insertPrincipal(100, 1, "actor", null, List.of("New Role"), 99);
+
+        assertThat(result).isEqualTo(WriteResult.SUCCESS);
+        assertThat(repository.findAllPrincipals(100)).extracting("ordering").contains(99);
+    }
+
+    @Test
+    void updatePrincipalBumpsVersionAndPersists() {
+        repository.insertPrincipal(100, 1, "actor", null, List.of("Original"), 98);
+
+        var result = repository.updatePrincipal(100, 98, "actor", null, List.of("Updated"), 0);
+
+        assertThat(result).isEqualTo(WriteResult.SUCCESS);
+        var updated = repository.findAllPrincipals(100).stream()
+                .filter(p -> p.ordering() == 98).findFirst().orElseThrow();
+        assertThat(updated.characters()).containsExactly("Updated");
+        assertThat(updated.version()).isEqualTo(1);
+    }
+
+    @Test
+    void softDeletePrincipalExcludesItFromFindAllPrincipals() {
+        repository.insertPrincipal(100, 1, "actor", null, List.of("Temp"), 97);
+
+        repository.softDeletePrincipal(100, 97);
+
+        assertThat(repository.findAllPrincipals(100)).extracting("ordering").doesNotContain(97);
+    }
 }

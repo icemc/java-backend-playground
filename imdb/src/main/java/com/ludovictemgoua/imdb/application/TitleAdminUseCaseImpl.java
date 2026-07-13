@@ -3,6 +3,7 @@ package com.ludovictemgoua.imdb.application;
 import com.ludovictemgoua.imdb.application.contracts.TitleAdminUseCase;
 import com.ludovictemgoua.imdb.domain.exception.ConflictException;
 import com.ludovictemgoua.imdb.domain.exception.NotFoundException;
+import com.ludovictemgoua.imdb.domain.model.PrincipalCredit;
 import com.ludovictemgoua.imdb.domain.model.TitleCore;
 import com.ludovictemgoua.imdb.domain.repository.TitleRepository;
 import com.ludovictemgoua.imdb.domain.repository.WriteResult;
@@ -75,6 +76,30 @@ public class TitleAdminUseCaseImpl implements TitleAdminUseCase {
     @Override
     public void deleteRating(String titleId) {
         handle(titleRepository.deleteRating(ImdbIds.parseTitleId(titleId)), titleId);
+    }
+
+    @Override
+    public List<PrincipalCredit> getAllPrincipals(String titleId) {
+        return titleRepository.findAllPrincipals(ImdbIds.parseTitleId(titleId));
+    }
+
+    @Override
+    public void addPrincipal(String titleId, PrincipalRequest request) {
+        int tconst = ImdbIds.parseTitleId(titleId);
+        handle(titleRepository.insertPrincipal(tconst, ImdbIds.parsePersonId(request.personId()),
+                request.category(), request.job(), request.characters(), request.ordering()), titleId);
+    }
+
+    @Override
+    public void updatePrincipal(String titleId, int ordering, PrincipalRequest request, int expectedVersion) {
+        int tconst = ImdbIds.parseTitleId(titleId);
+        handle(titleRepository.updatePrincipal(tconst, ordering, request.category(), request.job(),
+                request.characters(), expectedVersion), titleId);
+    }
+
+    @Override
+    public void deletePrincipal(String titleId, int ordering) {
+        handle(titleRepository.softDeletePrincipal(ImdbIds.parseTitleId(titleId), ordering), titleId);
     }
 
     private static List<Integer> toPersonIds(List<String> personIds) {

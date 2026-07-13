@@ -4,6 +4,7 @@ import com.ludovictemgoua.imdb.domain.model.CastMember;
 import com.ludovictemgoua.imdb.domain.model.CreditedPerson;
 import com.ludovictemgoua.imdb.domain.model.GenreTopRatedItem;
 import com.ludovictemgoua.imdb.domain.model.PagedResult;
+import com.ludovictemgoua.imdb.domain.model.PrincipalCredit;
 import com.ludovictemgoua.imdb.domain.model.SharedTitle;
 import com.ludovictemgoua.imdb.domain.model.TitleCore;
 import com.ludovictemgoua.imdb.domain.model.TitleSummary;
@@ -43,4 +44,14 @@ public interface TitleRepository {
     WriteResult upsertRating(int tconst, double averageRating, int numVotes);
 
     WriteResult deleteRating(int tconst);
+
+    List<PrincipalCredit> findAllPrincipals(int tconst);
+
+    WriteResult insertPrincipal(int tconst, int personId, String category, String job,
+                                List<String> characters, int ordering);
+
+    WriteResult updatePrincipal(int tconst, int ordering, String category, String job,
+                                List<String> characters, int expectedVersion);
+
+    WriteResult softDeletePrincipal(int tconst, int ordering);
 }
