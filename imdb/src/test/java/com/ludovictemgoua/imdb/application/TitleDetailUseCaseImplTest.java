@@ -3,7 +3,9 @@ package com.ludovictemgoua.imdb.application;
 import com.ludovictemgoua.imdb.domain.exception.NotFoundException;
 import com.ludovictemgoua.imdb.domain.model.CastMember;
 import com.ludovictemgoua.imdb.domain.model.CreditedPerson;
+import com.ludovictemgoua.imdb.domain.model.RatingAggregate;
 import com.ludovictemgoua.imdb.domain.model.TitleCore;
+import com.ludovictemgoua.imdb.domain.repository.ReviewRepository;
 import com.ludovictemgoua.imdb.domain.repository.TitleRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -22,6 +24,8 @@ class TitleDetailUseCaseImplTest {
 
     @Mock
     TitleRepository titleRepository;
+    @Mock
+    ReviewRepository reviewRepository;
 
     @Test
     void assemblesTitleDetailFromFiveRepositoryCalls() {
@@ -36,8 +40,9 @@ class TitleDetailUseCaseImplTest {
                 .willReturn(List.of(new CastMember("nm0000209", "Tim Robbins", "actor",
                         List.of("Andy Dufresne"), 1)));
         given(titleRepository.countCast(111161)).willReturn(20);
+        given(reviewRepository.aggregateForTitle(111161)).willReturn(new RatingAggregate(8.5, 42));
 
-        var detail = new TitleDetailUseCaseImpl(titleRepository).getDetail("tt0111161");
+        var detail = new TitleDetailUseCaseImpl(titleRepository, reviewRepository).getDetail("tt0111161");
 
         assertThat(detail.id()).isEqualTo("tt0111161");
         assertThat(detail.rating().average()).isEqualTo(9.3);
@@ -45,13 +50,15 @@ class TitleDetailUseCaseImplTest {
         assertThat(detail.directors()).hasSize(1);
         assertThat(detail.cast()).hasSize(1);
         assertThat(detail.castTotalCount()).isEqualTo(20);
+        assertThat(detail.userRatingAverage()).isEqualTo(8.5);
+        assertThat(detail.userRatingCount()).isEqualTo(42);
     }
 
     @Test
     void missingCoreThrowsNotFound() {
         given(titleRepository.findCore(111161)).willReturn(Optional.empty());
 
-        assertThatThrownBy(() -> new TitleDetailUseCaseImpl(titleRepository).getDetail("tt0111161"))
+        assertThatThrownBy(() -> new TitleDetailUseCaseImpl(titleRepository, reviewRepository).getDetail("tt0111161"))
                 .isInstanceOf(NotFoundException.class);
     }
 
@@ -64,8 +71,9 @@ class TitleDetailUseCaseImplTest {
         given(titleRepository.findWriters(9999999)).willReturn(List.of());
         given(titleRepository.findTopCast(9999999, 20)).willReturn(List.of());
         given(titleRepository.countCast(9999999)).willReturn(0);
+        given(reviewRepository.aggregateForTitle(9999999)).willReturn(new RatingAggregate(0, 0));
 
-        var detail = new TitleDetailUseCaseImpl(titleRepository).getDetail("tt9999999");
+        var detail = new TitleDetailUseCaseImpl(titleRepository, reviewRepository).getDetail("tt9999999");
 
         assertThat(detail.rating().average()).isZero();
         assertThat(detail.rating().numVotes()).isZero();

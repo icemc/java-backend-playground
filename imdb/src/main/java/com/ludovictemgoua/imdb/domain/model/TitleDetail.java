@@ -6,5 +6,6 @@ public record TitleDetail(String id, String primaryTitle, String originalTitle, 
                            Integer startYear, Integer endYear, Integer runtimeMinutes,
                            List<String> genres, RatingView rating,
                            List<CreditedPerson> directors, List<CreditedPerson> writers,
-                           List<CastMember> cast, int castTotalCount) {
+                           List<CastMember> cast, int castTotalCount,
+                           double userRatingAverage, int userRatingCount) {
 }

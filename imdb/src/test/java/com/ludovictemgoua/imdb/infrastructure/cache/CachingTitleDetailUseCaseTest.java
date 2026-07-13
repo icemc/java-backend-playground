@@ -57,7 +57,7 @@ class CachingTitleDetailUseCaseTest {
     void secondCallWithTheSameTitleIdIsServedFromCache() {
         var detail = new TitleDetail("tt0111161", "The Shawshank Redemption", "The Shawshank Redemption",
                 "movie", 1994, null, 142, List.of("Drama"), new RatingView(9.3, 2900000),
-                List.of(), List.of(), List.of(), 0);
+                List.of(), List.of(), List.of(), 0, 0.0, 0);
         given(delegate.getDetail("tt0111161")).willReturn(detail);
 
         target.getDetail("tt0111161");

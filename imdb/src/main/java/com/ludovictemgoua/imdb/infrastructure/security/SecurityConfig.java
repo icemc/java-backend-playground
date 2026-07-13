@@ -38,13 +38,14 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/actuator/**", "/api/v1/auth/**").permitAll()
-                        // /lists/me and /users/me must be declared before the broader /api/v1/lists/*
-                        // and /api/v1/users/* permits below - Spring Security evaluates matchers in
-                        // declaration order and the first match wins, so without this ordering the
-                        // single-path-segment wildcards below would incorrectly treat "me" as a public
-                        // resource id.
+                        // /lists/me, /users/me, and /titles/*/reviews/me must be declared before the
+                        // broader /api/v1/lists/*, /api/v1/users/*, and /api/v1/titles/** permits below -
+                        // Spring Security evaluates matchers in declaration order and the first match
+                        // wins, so without this ordering those broader wildcards/prefixes would
+                        // incorrectly treat "me" as a public resource id.
                         .requestMatchers(HttpMethod.GET, "/api/v1/lists/me").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/v1/users/me").authenticated()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/titles/*/reviews/me").authenticated()
                         .requestMatchers(HttpMethod.GET,
                                 "/api/v1/titles/**", "/api/v1/genres/**", "/api/v1/people/six-degrees",
                                 "/api/v1/lists/public", "/api/v1/lists/*", "/api/v1/users/*",
