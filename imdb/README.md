@@ -141,6 +141,8 @@ All TTLs are long because the dataset only changes on image reload; there is no 
 
 All errors are RFC 7807 `ProblemDetail` (404 for unknown IDs, 400 for malformed IDs/out-of-range `maxDegree`/missing params, 405 for the wrong HTTP method). Full contracts, request/response shapes, and error handling: [`docs/low-level-design.md`](docs/low-level-design.md) §4/§9.
 
+Interactive API docs, generated from the live controllers: [`/swagger-ui/index.html`](http://localhost:8080/swagger-ui/index.html) (Swagger UI) or [`/redoc.html`](http://localhost:8080/redoc.html) (Redoc), both reading the same generated document at `/v3/api-docs`.
+
 Beyond the original read-only endpoints above, a later CRUD expansion (`docs/crud-expansion-design.md`) added admin write access over the core entities and a user-generated-content layer, all under JWT auth ([Authentication](#authentication)):
 
 | Group | Endpoints | Notes |
