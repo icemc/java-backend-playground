@@ -6,6 +6,7 @@ import com.ludovictemgoua.imdb.domain.exception.NotFoundException;
 import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.QueryTimeoutException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.security.access.AccessDeniedException;
@@ -78,6 +79,21 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     public ProblemDetail handleAccessDenied(AccessDeniedException ex) {
         log.debug("access denied: {}", ex.getMessage());
         return ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, "You do not have permission to perform this action");
+    }
+
+    // The six-degrees bidirectional BFS (find_shortest_co_star_path) has a hard query timeout
+    // (six-degrees.query-timeout-seconds) - a real, expected outcome for genuinely hard person pairs
+    // (large hub actors reached mid-expansion with no intersection yet), not a bug each time it fires.
+    // Spring wraps the driver's statement-canceled error in this exception; without a dedicated
+    // handler it fell through to the generic Exception.class catch-all below and reported a plain 500
+    // "unexpected error", which is misleading for something the system anticipated and cut short on
+    // purpose. 504 plus an explicit message is the honest status for "the server gave up waiting on a
+    // downstream operation," matching what actually happened.
+    @ExceptionHandler(QueryTimeoutException.class)
+    public ProblemDetail handleQueryTimeout(QueryTimeoutException ex) {
+        log.warn("query timed out: {}", ex.getMessage());
+        return ProblemDetail.forStatusAndDetail(HttpStatus.GATEWAY_TIMEOUT,
+                "This query took too long to compute and was canceled - try a lower maxDegree or a different pair");
     }
 
     // Catch-all for anything not already handled above - without this, an unexpected failure (a bug,

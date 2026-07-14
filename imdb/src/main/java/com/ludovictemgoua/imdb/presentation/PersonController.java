@@ -62,7 +62,11 @@ public class PersonController {
                     description = "Either a result (with a degree, or degree=null if no path exists within "
                             + "maxDegree) or a disambiguation payload"),
             @ApiResponse(responseCode = "400", description = "maxDegree is out of range (must be 1-7)"),
-            @ApiResponse(responseCode = "404", description = "personA or personB matches no known person")
+            @ApiResponse(responseCode = "404", description = "personA or personB matches no known person"),
+            @ApiResponse(responseCode = "504",
+                    description = "The search took too long to compute against a genuinely hard pair "
+                            + "(e.g. two well-connected hub actors with no shared title) and was canceled "
+                            + "server-side - try a lower maxDegree or a different pair")
     })
     public ResponseEntity<?> sixDegrees(
             @Parameter(description = "First person: an nm-id (e.g. nm0000102) or a free-text name")

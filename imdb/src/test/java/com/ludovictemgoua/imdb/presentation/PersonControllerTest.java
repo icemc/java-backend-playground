@@ -11,6 +11,7 @@ import com.ludovictemgoua.imdb.domain.model.PersonCore;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.dao.QueryTimeoutException;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -84,6 +85,17 @@ class PersonControllerTest {
                         .param("personA", "Nobody")
                         .param("personB", "nm0000158"))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void returns504WhenTheQueryTimesOut() throws Exception {
+        given(sixDegreesUseCase.compute("nm0000102", "nm3937654", 7))
+                .willThrow(new QueryTimeoutException("canceling statement due to user request"));
+
+        mockMvc.perform(get("/api/v1/people/six-degrees")
+                        .param("personA", "nm0000102")
+                        .param("personB", "nm3937654"))
+                .andExpect(status().isGatewayTimeout());
     }
 
     @Test
