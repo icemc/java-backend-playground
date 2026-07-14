@@ -38,7 +38,7 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/actuator/**", "/api/v1/auth/**",
-                                "/v3/api-docs/**", "/swagger-ui.html", "/swagger-ui/**").permitAll()
+                                "/v3/api-docs/**", "/swagger-ui.html", "/swagger-ui/**", "/redoc.html").permitAll()
                         // /lists/me, /users/me, and /titles/*/reviews/me must be declared before the
                         // broader /api/v1/lists/*, /api/v1/users/*, and /api/v1/titles/** permits below -
                         // Spring Security evaluates matchers in declaration order and the first match
