@@ -19,12 +19,20 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 
-// Runs first in the filter chain (Ordered.HIGHEST_PRECEDENCE) so the request id is in MDC - and
-// therefore in every structured log line, including ones from other filters/interceptors - for as
-// much of the request's lifecycle as possible. A plain @Component is enough for Spring Boot to
-// auto-register any jakarta.servlet.Filter bean; no separate FilterRegistrationBean needed.
+// Ordered.HIGHEST_PRECEDENCE + 2, not HIGHEST_PRECEDENCE itself: Spring's own
+// ServerHttpObservationFilter (WebMvcObservationAutoConfiguration) registers at exactly
+// HIGHEST_PRECEDENCE + 1 (confirmed by decompiling spring-boot-webmvc-4.1.0.jar, not assumed) - that
+// filter is what opens the span whose scope triggers trace/span-id MDC population
+// (micrometer-tracing-bridge-otel's Slf4JEventListener, also auto-registered). Running at
+// HIGHEST_PRECEDENCE itself would wrap *around* that filter instead of nesting inside it, so
+// "request started"/"request completed" below would log before the span exists and after it's
+// already closed - exactly the bug this order was chosen to avoid (confirmed empirically: those two
+// log lines were the only ones in a request's entire lifecycle missing traceId/spanId, despite the
+// MDC population mechanism itself working correctly for everything logged in between). A plain
+// @Component is enough for Spring Boot to auto-register any jakarta.servlet.Filter bean; no separate
+// FilterRegistrationBean needed.
 @Component
-@Order(Ordered.HIGHEST_PRECEDENCE)
+@Order(Ordered.HIGHEST_PRECEDENCE + 2)
 public class RequestLoggingFilter extends OncePerRequestFilter {
 
     private static final Logger log = LoggerFactory.getLogger(RequestLoggingFilter.class);

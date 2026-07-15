@@ -632,15 +632,17 @@ instead of just measuring a warm Redis round-trip after the first request - see 
   alternatives since it's schema-agnostic and Loki doesn't care about a specific schema, unlike ECS
   (Elastic-specific) or GELF (Graylog-specific).
   - **Correlation IDs**: every MDC entry is automatically included in each JSON line, which is what
-    carries two independent identifiers with no per-log-statement wiring: `traceId`/`spanId` (already
-    populated by Micrometer Tracing whenever a span is active) and `requestId` - a dedicated id
-    assigned by `presentation.RequestLoggingFilter`, deliberately independent of tracing so it stays a
-    reliable per-request identifier even if trace sampling is later turned down from today's 100%
-    (`management.tracing.sampling.probability`). The filter honors an incoming `X-Request-Id` header
-    if the caller already generated one, otherwise generates a UUID; echoes it back as a response
-    header; and clears it from MDC in a `finally` block so it can't leak onto the next request handled
-    by the same pooled thread. Runs at `Ordered.HIGHEST_PRECEDENCE` so the id is set as early as
-    possible in the chain.
+    carries two independent identifiers with no per-log-statement wiring: `traceId`/`spanId`
+    (populated by micrometer-tracing-bridge-otel's `Slf4JEventListener` whenever a span's scope is
+    open - see §7.2 for why this needed a filter-order fix to actually cover every log line) and
+    `requestId` - a dedicated id assigned by `presentation.RequestLoggingFilter`, deliberately
+    independent of tracing so it stays a reliable per-request identifier even if trace sampling is
+    later turned down from today's 100% (`management.tracing.sampling.probability`). The filter
+    honors an incoming `X-Request-Id` header if the caller already generated one, otherwise generates
+    a UUID; echoes it back as a response header; and clears it from MDC in a `finally` block so it
+    can't leak onto the next request handled by the same pooled thread. Runs at
+    `Ordered.HIGHEST_PRECEDENCE + 2` (§7.2) so the id is set as early as possible in the chain while
+    still nesting inside the span whose scope populates `traceId`/`spanId`.
   - **Sanitizer**: `utils.HeaderSanitizer` redacts a deny-list (`Authorization`, `Cookie`,
     `Set-Cookie`, `X-Api-Key`) before `RequestLoggingFilter` logs request headers. This API has no
     auth today, so nothing sensitive flows through yet - the point is that logging is already correct
@@ -729,6 +731,56 @@ directly against Prometheus (both directly and through Grafana's own datasource-
 Grafana-side provisioning-cache issue) with real traffic generated live (`curl` loops for the HTTP/cache
 panels, an actual short `k6 run` for the k6 panels), and confirmed real, non-`NaN`, non-empty values back
 for every one of them.
+
+### 7.2 End-to-end request tracing: closing the MDC gap and instrumenting DB/cache/controller
+
+Every request already produced a real trace reaching Tempo - confirmed by querying Tempo directly. What
+didn't work, despite an earlier (incorrect) claim in this document that it already did: `traceId`/
+`spanId` on every log line, and any span coverage below the HTTP/Security layer. Full design:
+[`docs/tracing-design.md`](tracing-design.md). Four changes, all verified live against the running stack
+(a real trace pulled from Tempo's API, not just "it compiled"):
+
+1. **`RequestLoggingFilter` reordered to `Ordered.HIGHEST_PRECEDENCE + 2`.** Root cause (confirmed by
+   decompiling the actual Boot 4.1 jars, not assumed): the MDC-population mechanism
+   (`OpenTelemetryTracingAutoConfiguration.otelSlf4JEventListener()`, auto-registered) genuinely works,
+   but Spring's own `ServerHttpObservationFilter` - the filter that opens the span whose scope triggers
+   it - registers at exactly `HIGHEST_PRECEDENCE + 1`. `RequestLoggingFilter` ran at
+   `HIGHEST_PRECEDENCE` itself, one step *before* it, so "request started" logged before the span
+   existed and "request completed" logged after it had already closed - the only two log lines in a
+   request's entire lifecycle missing `traceId`. Verified live: both lines now carry it (also covered
+   by a new integration test, `RequestTracingIntegrationTest`, asserting this via a Logback
+   `ListAppender` against a real `MockMvc` request through the full filter chain).
+2. **Database spans**: `net.ttddyy.observation:datasource-micrometer-spring-boot` wraps the HikariCP
+   `DataSource` with zero repository code changes. A live trace shows `connection` (tagged with the
+   actual `HikariPool-1` pool name - `jdbc.datasource.pool`), `query` (the real SQL text,
+   `jdbc.query[0]`), and `result-set` (`jdbc.row-count`) as separate spans - connection-acquisition
+   time is now directly visible, the exact thing that would have made this session's earlier Hikari
+   pool-exhaustion incidents (§8) obvious from a trace instead of log archaeology.
+3. **Cache spans**: no new dependency needed - Boot 4.1's `spring-boot-data-redis` module ships
+   `LettuceObservationAutoConfiguration` already wired to the existing `ObservationRegistry`, so real
+   Redis commands (`get`, `set`, ...) were *already* becoming spans automatically, discovered by
+   checking a live trace before writing any code for this. What genuinely needed building:
+   `infrastructure.cache.ObservingRedisCacheWriter`, a full delegating wrapper around the
+   `redisCacheWriter` bean that tags the current Observation with `cache.result=hit`/`miss` from
+   inside `get(...)` - the same hit/miss signal `cacheStatisticsMeterBinder` already tracks in
+   aggregate, now attached to a single request's trace. Lands on the enclosing controller span (below)
+   rather than the Redis span itself, since Lettuce closes its own span synchronously inside the
+   `get()` call, before this wrapper's code runs.
+4. **Controller spans**: `infrastructure.observability.ControllerObservationInterceptor`, a
+   `HandlerInterceptor` registered via `ObservabilityWebMvcConfig`, brackets each resolved controller
+   method (e.g. `TitleController#get`) as its own span - nested inside the Security filter-chain spans,
+   around the DB/cache spans above. Needed a fallback to `ObservationRegistry.NOOP` via
+   `ObjectProvider` (`ObservabilityWebMvcConfig`'s constructor) - `WebMvcConfigurer` beans are pulled
+   into every `@WebMvcTest` slice regardless of what else that slice excludes, but `@WebMvcTest` also
+   explicitly disables tracing autoconfiguration, so all eight `@WebMvcTest` controller test classes
+   failed context startup with a constructor `UnsatisfiedDependencyException` before this fix.
+
+Resulting trace shape for a real request (`GET /api/v1/titles/tt9000009`, a 404 - pulled directly from
+Tempo, not illustrative):
+`http get /api/v1/titles/{titleId}` -> `secured request` -> `TitleController#get`
+(`cache.result=miss`) -> `get` (Redis, `db.system=redis`) and, since it missed,
+`connection`/`query`/`result-set` (Postgres, real SQL text, `jdbc.row-count=0`) - all under one
+`traceId`, and every `RequestLoggingFilter` log line for that request carrying the same one.
 
 ## 8. k6 Load Testing Plan
 
@@ -940,9 +992,9 @@ one post-generation addition needed (`spring-boot-starter-jackson`, see below):
 | Prometheus | Yes | Micrometer -> Prometheus format, scraped by the `prometheus` compose service |
 | Distributed Tracing | Yes | Span/trace IDs in logs - log<->trace correlation, §7 |
 | OpenTelemetry | Yes | Publishes traces via OTLP to Tempo, pairs with Distributed Tracing - both selections resolve to the single unified `spring-boot-starter-opentelemetry` artifact on Boot 4.1 |
-| springdoc-openapi | No | Its Initializr `versionRange` is `[3.5.0.RELEASE, 4.1.0.M1)` - the exact same cutoff as `datasource-micrometer` below, i.e. not yet ported to Boot 4.1. Swagger UI is deferred to whenever springdoc catches up (see PDD §12, Out of Scope); it isn't load-bearing for anything else in this design. |
+| springdoc-openapi | Revisited | Excluded at Initializr time (`versionRange` `[3.5.0.RELEASE, 4.1.0.M1)`, not yet ported to Boot 4.1). Added later, directly as `springdoc-openapi-starter-webmvc-ui` 3.0.3 (not via Initializr), once empirically confirmed compatible with the real Boot 4.1.0 - see the OpenAPI UI docs. |
 | Testcontainers | Yes | Backs the integration-test plan, §10 |
-| datasource-micrometer | No | Its Initializr `versionRange` is `[3.5.0.RELEASE, 4.1.0.M1)` - not yet ported to the Boot 4.1 line. The gap is covered anyway: Spring Boot auto-binds HikariCP connection-pool metrics via Actuator/Micrometer with no extra dependency, and the one query worth watching closely (the six-degrees CTE) already gets a hand-rolled timeout per §5.2. |
+| datasource-micrometer | Revisited | Same original reasoning as springdoc-openapi above (Initializr `versionRange` not yet covering Boot 4.1). Added later as `net.ttddyy.observation:datasource-micrometer-spring-boot` 2.2.1, once empirically confirmed compatible with the real Boot 4.1.0 - see §7.2. |
 | Lombok | No | This monorepo uses Java records for value types (see `votee`), not Lombok-generated boilerplate |
 | Docker Compose (dev-tool) | No | Conflicts with our hand-authored `docker-compose.yaml`, which already includes the app itself as a service |
 | Zipkin | No | Redundant trace backend - traces already go via OpenTelemetry/OTLP to Tempo |

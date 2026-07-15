@@ -2,6 +2,7 @@ package com.ludovictemgoua.imdb.infrastructure.cache;
 
 import io.micrometer.core.instrument.FunctionCounter;
 import io.micrometer.core.instrument.binder.MeterBinder;
+import io.micrometer.observation.ObservationRegistry;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -29,15 +30,20 @@ public class CacheConfig {
             Set.of("title-search", "title-detail", "top-rated", "six-degrees");
 
     @Bean
-    public RedisCacheWriter redisCacheWriter(RedisConnectionFactory connectionFactory) {
+    public RedisCacheWriter redisCacheWriter(RedisConnectionFactory connectionFactory,
+                                              ObservationRegistry observationRegistry) {
         // .collectStatistics() turns on Spring Data Redis's own CacheStatisticsCollector (gets/hits/
         // misses/puts per cache name) - the same native source Spring Boot's now-removed
         // CacheMetricsRegistrar/RedisCacheMeterBinderProvider used to read automatically pre-Boot-4.1
         // (confirmed absent by decompiling spring-boot-actuator-autoconfigure-4.1.0.jar: no "cache"
         // package exists in it at all anymore). cacheStatisticsMeterBinder below is the manual
         // replacement for that removed auto-binding, reading from this same writer.
-        return RedisCacheWriter.create(connectionFactory,
+        RedisCacheWriter writer = RedisCacheWriter.create(connectionFactory,
                 RedisCacheWriter.RedisCacheWriterConfigurer::collectStatistics);
+        // Wrapped so every cache lookup also tags the current trace span with cache.result=hit/miss
+        // (tracing-design.md) - the same hit/miss signal the Counters above already track in
+        // aggregate, attached to a single request's trace instead.
+        return new ObservingRedisCacheWriter(writer, observationRegistry);
     }
 
     @Bean
