@@ -17,16 +17,16 @@ INSERT INTO name_basics (nconst, primary_name, birth_year, known_for_titles) VAL
   (21, 'Jamie Lee', 1990, ARRAY[]::integer[]);
 
 INSERT INTO title_basics (tconst, title_type, primary_title, original_title, start_year, genres) VALUES
-  (100, 'movie', 'A Few Good Men', 'A Few Good Men', 1992, ARRAY['Drama']),
-  (101, 'movie', 'Movie B', 'Movie B', 1995, ARRAY['Drama']),
-  (102, 'movie', 'Movie C', 'Movie C', 1998, ARRAY['Drama']),
-  (103, 'movie', 'Movie D', 'Movie D', 2001, ARRAY['Drama']),
-  (104, 'movie', 'The Terminal', 'The Terminal', 2004, ARRAY['Drama']),
-  (105, 'movie', 'Solo Film', 'Solo Film', 2010, ARRAY['Drama']),
-  (200, 'movie', 'High Vote Solid Rating', 'High Vote Solid Rating', 2000, ARRAY['Action']),
-  (201, 'movie', 'Low Vote Perfect Rating', 'Low Vote Perfect Rating', 2000, ARRAY['Action']),
-  (202, 'movie', 'Average Movie A', 'Average Movie A', 2000, ARRAY['Action']),
-  (203, 'movie', 'Average Movie B', 'Average Movie B', 2000, ARRAY['Action']);
+  (100, 'movie', 'A Few Good Men', 'A Few Good Men', 1992, ARRAY['Drama']::genre[]),
+  (101, 'movie', 'Movie B', 'Movie B', 1995, ARRAY['Drama']::genre[]),
+  (102, 'movie', 'Movie C', 'Movie C', 1998, ARRAY['Drama']::genre[]),
+  (103, 'movie', 'Movie D', 'Movie D', 2001, ARRAY['Drama']::genre[]),
+  (104, 'movie', 'The Terminal', 'The Terminal', 2004, ARRAY['Drama']::genre[]),
+  (105, 'movie', 'Solo Film', 'Solo Film', 2010, ARRAY['Drama']::genre[]),
+  (200, 'movie', 'High Vote Solid Rating', 'High Vote Solid Rating', 2000, ARRAY['Action']::genre[]),
+  (201, 'movie', 'Low Vote Perfect Rating', 'Low Vote Perfect Rating', 2000, ARRAY['Action']::genre[]),
+  (202, 'movie', 'Average Movie A', 'Average Movie A', 2000, ARRAY['Action']::genre[]),
+  (203, 'movie', 'Average Movie B', 'Average Movie B', 2000, ARRAY['Action']::genre[]);
 
 -- The weighted-rating test case (queried with minVotes=100, PDD §9): 201's raw average (10.0) beats
 -- 200's (8.9), and 201's vote count (100) exactly clears the minVotes floor - but against a realistic

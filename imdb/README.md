@@ -39,7 +39,7 @@ Given the real, untruncated IMDb dataset (millions of titles and people, tens of
 - Redis cache-aside in front of every endpoint, since the dataset only changes on a one-time image reload.
 - Full observability: structured JSON logs, Prometheus metrics, and OpenTelemetry traces, correlated in one Grafana instance.
 - A three-tier test pipeline (unit → Testcontainers integration → Postman/Newman e2e) wired into CI.
-- k6 load testing per endpoint, with results pushed into the same observability stack.
+- k6 load testing, both per-endpoint and all-endpoints-at-once, with results pushed into the same observability stack.
 
 ## Functional requirements
 
@@ -236,6 +236,17 @@ One [k6](https://k6.io/) script per endpoint under `k6/`, run one at a time so r
 
 ```
 docker compose --profile load-test run k6 run /scripts/six-degrees.js
+```
+
+`all-endpoints.js` takes the opposite approach on purpose: three scenarios (`browsing`, `userJourney`,
+`adminWrites`) covering all 48 endpoints run *simultaneously*, to see how the system behaves when
+everything is loaded at once rather than one endpoint in isolation. Running it for the first time found
+five real bugs (Hikari pool sizing, three enum/schema drifts between this project's own Testcontainers
+schema and the real imported database, and an admin id sequence colliding with orphaned imported rows) -
+details in [`docs/low-level-design.md`](docs/low-level-design.md) §8.
+
+```
+docker compose --profile load-test run k6 run /scripts/all-endpoints.js
 ```
 
 Full plan and per-endpoint thresholds: [`docs/low-level-design.md`](docs/low-level-design.md) §8.

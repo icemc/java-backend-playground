@@ -752,6 +752,60 @@ traces/metrics for that time window. `k6` runs behind the `load-test` compose pr
 docker-compose --profile load-test run k6 run /scripts/six-degrees.js
 ```
 
+**`all-endpoints.js`** is a second, deliberately different testing philosophy alongside the isolated
+per-endpoint scripts above, not a replacement for them: three `scenarios` (`browsing`, `userJourney`,
+`adminWrites`) run **simultaneously** in one `k6 run`, covering all 48 endpoints (the original 4
+read-only ones plus every CRUD-expansion endpoint added since), including JWT-authenticated user and
+admin flows. The isolated scripts answer "how does endpoint X behave under load"; this one answers "how
+does the system behave when every endpoint is loaded at once" - a materially different question, since
+endpoints share the same HikariCP pool and Tomcat thread pool. `setup()` registers `USER_COUNT`
+throwaway users and logs in as the bootstrap admin once, up front; custom `Rate` metrics
+(`browsing_errors`, `user_journey_errors`, `admin_write_errors`) are used instead of the built-in
+`http_req_failed`, since several scenarios have legitimate non-2xx outcomes (six-degrees 404/504,
+optimistic-lock 409s). Run the same way, via the `load-test` compose profile:
+
+```
+docker-compose --profile load-test run k6 run /scripts/all-endpoints.js
+```
+
+Running this for the first time against the full combined peak load (up to ~105 VUs across the three
+scenarios at once) surfaced five real, previously-latent bugs, none of which the isolated single-endpoint
+scripts above could have found since none of them exercise more than one endpoint's worth of concurrent
+DB load at a time:
+
+1. **HikariCP pool exhaustion under combined concurrency** - the pool (already bumped from 10 to 30 by an
+   earlier isolated-search-load incident, see `application.yaml`) was sized for one scenario's peak, not
+   several at once; `CannotGetJdbcConnectionException` started appearing across nearly every repository,
+   not just one endpoint. Bumped to 60.
+2. **`title_type` and `category` are Postgres enums on the real, `imdblib`-imported database, but plain
+   `TEXT` in this project's own `V0__base_schema.sql` fallback** (used only by fresh Testcontainers
+   schemas) - a bare varchar bind parameter isn't implicitly cast to an enum, so every admin title/
+   principal create or update failed. Closed the drift by having V0 declare the same enums production
+   already has (confirmed via `information_schema` against the live container), and added explicit
+   `::title_type` / `::category` casts at every write site.
+3. **`genres` has the identical drift** (`GENRE[]` in production, `TEXT[]` in V0) - already known and
+   partially worked around for reads (`genres_as_text()`, V1), but never fixed for writes. Same treatment:
+   V0 now declares a real `genre` enum and `genre[]` column, write sites cast `::genre[]`.
+4. **`title_basics.is_adult` is `NOT NULL` with no default on the real database** (unlike V0's own
+   `DEFAULT FALSE`) and was never part of `insertTitle`'s column list at all, since it isn't modeled
+   anywhere else in the API - every admin-created title failed the not-null constraint. Fixed by
+   explicitly inserting `false`.
+5. **`title_id_seq` collided with orphaned `title_principals` rows** - V6 seeded the sequence from
+   `max(tconst) FROM title_basics` alone, but raw IMDb exports are independently-snapshotted files, so
+   `title.principals.tsv` can reference a tconst `title.basics.tsv` doesn't have a row for (confirmed:
+   6,830 such orphaned rows on this dataset). Once admin title creation reached one of those ids,
+   `POST .../principals` failed with a `title_principals_pkey` duplicate-key error against a real,
+   already-imported credit. `V11__fix_admin_id_sequence_baselines.sql` recomputes both id sequences'
+   baselines as the greatest id referenced *anywhere* in the schema, not just each id's own table.
+
+After all five fixes, `admin_write_errors` dropped from 100% to 0%. One finding remains open, not a bug
+but a real capacity/latency characteristic: at ~80 concurrent `browsing` VUs, six-degrees' inherently slow
+queries (already a documented, accepted limitation in isolation - `six-degrees.js`'s own threshold is
+deliberately looser than the other three scripts) can hold a shared DB connection long enough to push
+*other*, normally-fast endpoints in the same scenario (e.g. `top-rated`) past k6's client-side request
+timeout. Isolating six-degrees onto its own connection pool, or reducing its share of combined-scenario
+traffic, would be the next thing to try if this needs to be closed rather than accepted.
+
 ## 9. Error Handling & API Conventions
 
 - All errors are RFC 7807 `ProblemDetail`: `404` for unknown IDs (`domain.exception.NotFoundException`,

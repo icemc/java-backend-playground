@@ -160,11 +160,20 @@ public class JdbcTitleRepository implements TitleRepository {
     @Override
     public TitleCore insertTitle(String primaryTitle, String originalTitle, String titleType,
                                  Integer startYear, Integer endYear, Integer runtimeMinutes, List<String> genres) {
+        // title_type and genres are Postgres enum / enum[] columns, not text - a bare varchar(-array)
+        // bind parameter isn't implicitly cast to either (confirmed via a real k6 load test: every
+        // create failed, first on title_type, then again on genres, each with the same "column ...
+        // is of type ... but expression is of type character varying(...)"), so both placeholders
+        // need an explicit cast. Same fix needed in updateTitle below.
+        // is_adult is NOT NULL with no default on the real imdblib-imported schema (unlike our own
+        // V0 fallback, which does default it) and isn't part of this API's create/update model at
+        // all - explicitly false for every admin-created title, same as every imported one that
+        // isn't flagged adult.
         String sql = """
                 INSERT INTO title_basics (tconst, primary_title, original_title, title_type,
-                                          start_year, end_year, runtime_minutes, genres)
-                VALUES (nextval('title_id_seq'), :primaryTitle, :originalTitle, :titleType,
-                        :startYear, :endYear, :runtimeMinutes, :genres)
+                                          start_year, end_year, runtime_minutes, genres, is_adult)
+                VALUES (nextval('title_id_seq'), :primaryTitle, :originalTitle, :titleType::title_type,
+                        :startYear, :endYear, :runtimeMinutes, :genres::genre[], false)
                 RETURNING tconst
                 """;
         var params = new MapSqlParameterSource()
@@ -185,9 +194,9 @@ public class JdbcTitleRepository implements TitleRepository {
         }
         String sql = """
                 UPDATE title_basics
-                SET primary_title = :primaryTitle, original_title = :originalTitle, title_type = :titleType,
+                SET primary_title = :primaryTitle, original_title = :originalTitle, title_type = :titleType::title_type,
                     start_year = :startYear, end_year = :endYear, runtime_minutes = :runtimeMinutes,
-                    genres = :genres, version = version + 1
+                    genres = :genres::genre[], version = version + 1
                 WHERE tconst = :tconst AND version = :expectedVersion AND deleted_at IS NULL
                 """;
         var params = new MapSqlParameterSource()
@@ -274,9 +283,11 @@ public class JdbcTitleRepository implements TitleRepository {
         if (findCore(tconst).isEmpty()) {
             return WriteResult.NOT_FOUND;
         }
+        // category is a Postgres enum, same reasoning as title_type::title_type above - a bare
+        // varchar bind parameter isn't implicitly cast to it.
         String sql = """
                 INSERT INTO title_principals (tconst, ordering, nconst, category, job, characters)
-                VALUES (:tconst, :ordering, :nconst, :category, :job, :characters)
+                VALUES (:tconst, :ordering, :nconst, :category::category, :job, :characters)
                 """;
         var params = new MapSqlParameterSource()
                 .addValue("tconst", tconst).addValue("ordering", ordering).addValue("nconst", personId)
@@ -291,7 +302,7 @@ public class JdbcTitleRepository implements TitleRepository {
                                        List<String> characters, int expectedVersion) {
         String sql = """
                 UPDATE title_principals
-                SET category = :category, job = :job, characters = :characters, version = version + 1
+                SET category = :category::category, job = :job, characters = :characters, version = version + 1
                 WHERE tconst = :tconst AND ordering = :ordering AND version = :expectedVersion AND deleted_at IS NULL
                 """;
         var params = new MapSqlParameterSource()

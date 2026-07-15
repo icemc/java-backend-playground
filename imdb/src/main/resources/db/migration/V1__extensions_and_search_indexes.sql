@@ -6,12 +6,11 @@ CREATE INDEX idx_title_basics_primary_title_trgm
 CREATE INDEX idx_title_basics_original_title_trgm
     ON title_basics USING gin (original_title gin_trgm_ops);
 
--- title_basics.genres is TEXT[] in our own V0 fallback schema (Testcontainers) but GENRE[] (a
--- custom enum array) on the real abanda/imdb-postgresql-seeded database - genres::text[] works as a
--- query-time cast against either, but Postgres won't accept a bare cast in an index expression since
--- it can't prove the underlying enum-array-to-text-array cast function is IMMUTABLE. Wrapping it in
--- our own SQL function marked IMMUTABLE (accepting anyarray, so it still works against either
--- schema) sidesteps that - discovered when the plain ::text[] version failed at migration time
+-- title_basics.genres is GENRE[] (a custom enum array, V0) - genres::text[] works as a query-time
+-- cast, but Postgres won't accept a bare cast in an index expression since it can't prove the
+-- underlying enum-array-to-text-array cast function is IMMUTABLE. Wrapping it in our own SQL
+-- function marked IMMUTABLE (accepting anyarray, so it still works if this column is ever plain
+-- text[] too) sidesteps that - discovered when the plain ::text[] version failed at migration time
 -- against the real, freshly-imported dataset with "functions in index expression must be marked
 -- IMMUTABLE". JdbcTitleRepository's genre filter query must use this same function, not a raw cast,
 -- so the planner recognizes the expression as matching the index.

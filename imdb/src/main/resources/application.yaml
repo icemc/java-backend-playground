@@ -8,9 +8,13 @@ spring:
     hikari:
       # Default (10) was completely swamped by k6's 100-VU search load test - HikariPool logs showed
       # total=10, active=10, idle=0, waiting=46, cascading into 30s connection-acquisition timeouts.
-      # 30 gives real headroom under concurrent load while staying well under Postgres's
-      # max_connections=100 (leaves room for postgres-exporter and manual/admin connections).
-      maximum-pool-size: 30
+      # 30 gave headroom for that isolated single-endpoint load, but k6/all-endpoints.js (which runs
+      # browsing/userJourney/adminWrites scenarios simultaneously, peaking around 105 combined VUs)
+      # exhausted it again - CannotGetJdbcConnectionException on nearly every repository, not just one
+      # endpoint, confirming pool-wide starvation rather than a bug in any single code path. 60 still
+      # leaves comfortable headroom under Postgres's max_connections=100 (pg_stat_activity showed only
+      # ~4 non-pool connections in use - exporter plus incidental admin sessions).
+      maximum-pool-size: 60
   data:
     redis:
       host: localhost
