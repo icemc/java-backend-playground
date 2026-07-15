@@ -21,6 +21,7 @@ A production-shaped Spring Boot REST API over the full [IMDb Non-Commercial Data
 - [API](#api)
 - [Authentication](#authentication)
 - [Observability](#observability)
+  - [Correlation in practice](#correlation-in-practice)
 - [External services](#external-services)
 - [Testing strategy](#testing-strategy)
 - [DevOps](#devops)
@@ -143,6 +144,10 @@ All errors are RFC 7807 `ProblemDetail` (404 for unknown IDs, 400 for malformed 
 
 Interactive API docs, generated from the live controllers: [`/swagger-ui/index.html`](http://localhost:8080/swagger-ui/index.html) (Swagger UI) or [`/redoc.html`](http://localhost:8080/redoc.html) (Redoc), both reading the same generated document at `/v3/api-docs`.
 
+<img src="assets/swagger-ui.png" alt="Swagger UI showing grouped, fully-documented endpoints" width="900">
+
+*Every one of the 48 endpoints carries a real summary, description, and per-status-code response doc via `@Operation`/`@ApiResponses` - not the auto-generated `delete_3`/`create_1` operationIds a default springdoc setup produces. Bearer-auth is wired into the "Authorize" button, so every "try it out" call on a protected endpoint just works.*
+
 Beyond the original read-only endpoints above, a later CRUD expansion (`docs/crud-expansion-design.md`) added admin write access over the core entities and a user-generated-content layer, all under JWT auth ([Authentication](#authentication)):
 
 | Group | Endpoints | Notes |
@@ -170,6 +175,11 @@ Stateless JWT, issued and verified by `infrastructure.security` (`JwtService`, `
 - **Logging**: structured JSON via Spring Boot 4.1's native structured logging (`logging.structured.format.console: logstash`, no extra dependency). A `RequestLoggingFilter` assigns/honors a per-request `X-Request-Id`, independent of trace sampling, alongside Micrometer's `traceId`/`spanId`; both land in every log line's MDC, including the filter's own request-start/request-completed lines (needed a filter-order fix past Spring's own tracing filter to actually cover those two - [`docs/low-level-design.md`](docs/low-level-design.md) §7.2). `utils.HeaderSanitizer` redacts sensitive headers (`Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`) before anything is logged. Shipped to Loki via Grafana Alloy.
 - **Tracing**: `spring-boot-starter-opentelemetry` (Boot 4.1's unified tracing starter) exports to Tempo via OTLP, 100% sampled for this exercise. A trace covers the full request lifecycle, not just HTTP/Security: `datasource-micrometer` gives every DB connection-acquire and SQL statement its own span (real HikariCP pool name, real query text), Boot's own Lettuce integration gives every Redis command its own span, and a `HandlerInterceptor` gives each controller method its own span tagged with the cache hit/miss outcome. Details and a real trace shape: §7.2.
 - **Correlation**: Grafana's datasources are provisioned with Loki ⇄ Tempo ⇄ Prometheus derived-field wiring, so a trace opened in Grafana click-throughs to its log lines and vice versa.
+
+<img src="assets/grafana-datasources.png" alt="Grafana data sources: Loki, Prometheus, Tempo, all provisioned" width="900">
+
+*All three signal types wired up as code (`observability/grafana/provisioning/datasources/`), not clicked together by hand in the UI - a fresh `docker-compose up` reproduces this exactly.*
+
 - **Dashboards**: four Grafana dashboards, provisioned from `observability/grafana/provisioning/dashboards/json/`, verified against live traffic (every panel's PromQL checked against a real scrape, not just schema-checked):
 
   | Dashboard | Covers |
@@ -179,7 +189,39 @@ Stateless JWT, issued and verified by `infrastructure.security` (`JwtService`, `
   | Cache Hit Ratio | Hit ratio by region, gets by region/result, puts by region |
   | k6 Load Test Results | Virtual users, request rate, p95 request duration, failed request rate, fed by a k6 run's own Prometheus remote-write output |
 
-  <!-- TODO: add dashboard screenshots here, one per dashboard above -->
+<img src="assets/grafana-dashboards.png" alt="Grafana dashboard list: HTTP Overview, Six Degrees Latency Breakdown, k6 Load Test Results, Cache Hit Ratio" width="900">
+
+<img src="assets/http-requests-dashboard.png" alt="HTTP Overview dashboard mid-load-test: request rate, p95 latency, 5xx rate, and JVM heap all climbing together" width="900">
+
+*Mid-load-test, not a static demo: request rate and p95 latency climbing together across every endpoint, JVM heap tracking along with it.*
+
+<img src="assets/6-degree-dashboard.png" alt="Six Degrees Latency Breakdown dashboard: p50/p95/p99 for six-degrees versus the other three endpoints" width="900">
+
+*The one endpoint that isn't a bounded index lookup gets its own dedicated latency breakdown - p99 pinned at the graph query's timeout ceiling, visibly separated from the other three endpoints on the same axes. This is what makes the accepted ~25-30% hard-pair failure rate ([Known limitations](#known-limitations)) a measured, monitored trade-off instead of an invisible one.*
+
+<img src="assets/redis-cache-hit-dashboard.png" alt="Cache Hit Ratio dashboard: hit ratio by region climbing from a cold cache to 80-100%" width="900">
+
+*Cache warming visible in real time - hit ratio climbing from 0% (cold) to 80-100% per region as repeat traffic lands, backed by the manually-rebuilt `cache.gets`/`cache.puts` counters (Boot 4.1 dropped the auto-binding this depended on - §7.1).*
+
+<img src="assets/k6-dashboard.png" alt="k6 Load Test Results dashboard showing a real failure-rate spike during a load test run" width="900">
+
+*Left as originally captured, failure spike included on purpose: this dashboard's job is to catch regressions, and it did - this exact run is what first surfaced the connection-pool exhaustion and schema-drift bugs fixed and documented in [Load testing](#load-testing). A clean screenshot would prove less than this one does.*
+
+### Correlation in practice
+
+The payoff of wiring all three signals together: open a trace in Tempo and see the actual request broken into spans, not just "this endpoint took 220ms."
+
+<img src="assets/tempo-datasource-grafana-queries.png" alt="A real distributed trace in Tempo: nested spans for the security filter chain and a Redis command, each with real timing" width="900">
+
+*One real trace (`GET /api/v1/titles/{titleId}`), opened directly in Grafana's Tempo explorer: Spring Security's filter-chain overhead broken out from the actual data fetch, each span independently timed, all under one trace ID. A different request (a cache miss) additionally shows a `TitleController#get` span tagged `cache.result=miss`, HikariCP connection-acquire, the real SQL text, and row count as separate spans underneath it - full shape documented in [`docs/low-level-design.md`](docs/low-level-design.md) §7.2.*
+
+<img src="assets/prometheus-datasource-grafana-queries.png" alt="Raw PromQL query against cache_gets_total, broken down by region and hit/miss" width="900">
+
+*The metric backing the Cache Hit Ratio dashboard above, queried directly - a hand-rolled `FunctionCounter` (`CacheConfig.cacheStatisticsMeterBinder`), not a framework default.*
+
+<img src="assets/loki-datasource-grafana-queries.png" alt="Loki log explorer showing structured JSON logs with requestId and other correlation fields" width="900">
+
+*Structured JSON logs in Loki, one `RequestLoggingFilter` line per request lifecycle event - `requestId`, `traceId`, and `spanId` all queryable as first-class fields, not buried in an unstructured message string.*
 
 Full wiring details, including four real bugs found and fixed while verifying the dashboards against live data (missing percentile-histogram config, Boot 4.1's removed cache-metrics auto-binding, an invalid Prometheus flag, and wrong assumptions about k6's remote-write metric shapes): [`docs/low-level-design.md`](docs/low-level-design.md) §7/§7.1.
 
@@ -296,7 +338,6 @@ imdb/
 - Under k6 load, six-degrees requests initially failed 83% of the time against a missing index (`title_principals.nconst` had only a partial, actor-only index: every path-enrichment call fell back to a parallel sequential scan over the 100M-row table). Adding a full index (`V4__title_principals_nconst_index.sql`) brought that down substantially, but a persistent ~25-30% failure rate remains for genuinely hard pairs (large hub actors reached mid-expansion with no intersection yet). Raising the query timeout doesn't help; it just fails slower instead of failing fast, so this is tracked as an open follow-up rather than solved by a timeout knob (`application.yaml`, `six-degrees.query-timeout-seconds`).
 - `title_akas` (localized alternate titles) and `title_episode` (TV episode hierarchy) are loaded but not surfaced by any endpoint.
 - No rate limiting on any endpoint (including auth), and no email verification or password reset flow - both are infra/product concerns deliberately scoped out of the CRUD expansion, not oversights; see [`docs/crud-expansion-design.md`](docs/crud-expansion-design.md) §11 for the full deferred list.
-- Swagger/OpenAPI UI is deferred: `springdoc-openapi`'s Initializr `versionRange` doesn't yet cover Spring Boot 4.1.
 
 Full list, including deferred design alternatives (Pruned Landmark Labeling, a dedicated graph database): [`docs/product-design.md`](docs/product-design.md) §11/§12.
 
