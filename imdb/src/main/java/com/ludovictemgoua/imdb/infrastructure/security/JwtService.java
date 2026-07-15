@@ -39,6 +39,7 @@ public class JwtService {
         return Jwts.builder()
                 .subject(String.valueOf(userId))
                 .claim("roles", roles.stream().map(Role::name).collect(Collectors.toList()))
+                .claim("type", "access")
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plus(accessTokenTtl)))
                 .signWith(key)
@@ -65,12 +66,26 @@ public class JwtService {
             List<String> roleNames = claims.get("roles", List.class);
             Set<Role> roles = roleNames == null ? Set.of()
                     : roleNames.stream().map(Role::valueOf).collect(Collectors.toSet());
-            return Optional.of(new Parsed(userId, roles));
+            // "refresh" is the only value that ever means anything here - a bare/missing type claim
+            // is treated as an access token (not just refresh tokens predating this claim, but also
+            // any already-issued, not-yet-expired access token from before this check existed, so a
+            // rolling deploy doesn't force every logged-in session to re-authenticate).
+            boolean refreshToken = "refresh".equals(claims.get("type", String.class));
+            return Optional.of(new Parsed(userId, roles, refreshToken));
         } catch (JwtException | IllegalArgumentException e) {
             return Optional.empty();
         }
     }
 
-    public record Parsed(int userId, Set<Role> roles) {
+    // refreshToken distinguishes a redeemable-once-for-new-tokens credential from a bearer-auth
+    // credential - without checking it, a refresh token satisfies JwtAuthenticationFilter just like
+    // an access token would (it parses and signs the same way, and simply carries no roles), and an
+    // access token satisfies AuthUseCaseImpl.refresh() just like a refresh token would (findById
+    // succeeds for its userId regardless of which token type produced it). Found by Copilot code
+    // review, verified against this exact codebase before fixing: JwtAuthenticationFilter's roles
+    // check alone happened to be a correct-by-coincidence fix given every user always has exactly
+    // one role, but didn't close the second, symmetric hole at the refresh endpoint - this claim is
+    // the actual signal both call sites should have been checking.
+    public record Parsed(int userId, Set<Role> roles, boolean refreshToken) {
     }
 }

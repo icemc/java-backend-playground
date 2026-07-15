@@ -142,7 +142,7 @@ All TTLs are long because the dataset only changes on image reload; there is no 
 
 All errors are RFC 7807 `ProblemDetail` (404 for unknown IDs, 400 for malformed IDs/out-of-range `maxDegree`/missing params, 405 for the wrong HTTP method). Full contracts, request/response shapes, and error handling: [`docs/low-level-design.md`](docs/low-level-design.md) §4/§9.
 
-Interactive API docs, generated from the live controllers: [`/swagger-ui/index.html`](http://localhost:8080/swagger-ui/index.html) (Swagger UI) or [`/redoc.html`](http://localhost:8080/redoc.html) (Redoc), both reading the same generated document at `/v3/api-docs`.
+Interactive API docs, generated from the live controllers: [`/swagger-ui/index.html`](http://localhost:8080/swagger-ui/index.html), reading the generated OpenAPI document at `/v3/api-docs`.
 
 <img src="assets/swagger-ui.png" alt="Swagger UI showing grouped, fully-documented endpoints" width="900">
 

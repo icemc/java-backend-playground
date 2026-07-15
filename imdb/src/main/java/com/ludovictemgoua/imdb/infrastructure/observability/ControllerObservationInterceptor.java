@@ -29,8 +29,8 @@ public class ControllerObservationInterceptor implements HandlerInterceptor {
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
         if (!(handler instanceof HandlerMethod handlerMethod)) {
-            // Static resources (redoc.html, swagger-ui assets) and the default error handler go
-            // through this interceptor too but aren't a HandlerMethod - nothing worth a span there.
+            // Static resources (swagger-ui assets) and the default error handler go through this
+            // interceptor too but aren't a HandlerMethod - nothing worth a span there.
             return true;
         }
 

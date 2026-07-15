@@ -82,4 +82,43 @@ class AuthUseCaseImplTest {
         assertThatThrownBy(() -> useCase.login(new LoginRequest("ada@example.com", "wrong")))
                 .isInstanceOf(ForbiddenException.class);
     }
+
+    @Test
+    void refreshIssuesNewTokensForAValidRefreshToken() {
+        given(jwtService.parse("refresh-token"))
+                .willReturn(Optional.of(new JwtService.Parsed(1, Set.of(), true)));
+        given(userRepository.findById(1))
+                .willReturn(Optional.of(new User(1, "ada@example.com", "hash", "Ada", null, Role.USER, 0)));
+        given(jwtService.issueAccessToken(1, Set.of(Role.USER))).willReturn("new-access");
+        given(jwtService.issueRefreshToken(1)).willReturn("new-refresh");
+
+        var tokens = new AuthUseCaseImpl(userRepository, jwtService, passwordEncoder)
+                .refresh("refresh-token");
+
+        assertThat(tokens.accessToken()).isEqualTo("new-access");
+        assertThat(tokens.refreshToken()).isEqualTo("new-refresh");
+    }
+
+    // Regression test for a real bug found by Copilot code review: an access token used to parse
+    // successfully here too (JwtService.parse doesn't care which kind of token it's given), so a
+    // caller could mint a fresh token pair from their own short-lived access token without ever
+    // holding a real refresh token, defeating the point of the access token's short TTL.
+    @Test
+    void refreshRejectsAnAccessTokenPresentedAsARefreshToken() {
+        given(jwtService.parse("access-token"))
+                .willReturn(Optional.of(new JwtService.Parsed(1, Set.of(Role.USER), false)));
+        var useCase = new AuthUseCaseImpl(userRepository, jwtService, passwordEncoder);
+
+        assertThatThrownBy(() -> useCase.refresh("access-token"))
+                .isInstanceOf(ForbiddenException.class);
+    }
+
+    @Test
+    void refreshThrowsForbiddenForAnUnparsableToken() {
+        given(jwtService.parse("garbage")).willReturn(Optional.empty());
+        var useCase = new AuthUseCaseImpl(userRepository, jwtService, passwordEncoder);
+
+        assertThatThrownBy(() -> useCase.refresh("garbage"))
+                .isInstanceOf(ForbiddenException.class);
+    }
 }

@@ -36,7 +36,15 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String header = request.getHeader("Authorization");
         if (header != null && header.startsWith("Bearer ")) {
             String token = header.substring("Bearer ".length());
-            jwtService.parse(token).ifPresent(parsed -> authenticate(parsed.userId(), parsed.roles()));
+            // A refresh token is a valid, correctly-signed JWT too - excluding it here is what stops
+            // it from working as a general-purpose bearer credential on any endpoint that only checks
+            // isAuthenticated() (its own roles claim is always empty, but nothing here was previously
+            // checking that). Found by Copilot code review; JwtService.Parsed.refreshToken() is the
+            // real signal (see JwtService.parse()), not roles().isEmpty() - that happened to also
+            // work today only because this codebase never issues a role-less access token.
+            jwtService.parse(token)
+                    .filter(parsed -> !parsed.refreshToken())
+                    .ifPresent(parsed -> authenticate(parsed.userId(), parsed.roles()));
         }
         filterChain.doFilter(request, response);
     }

@@ -14,7 +14,10 @@ public class TestcontainersConfiguration {
 	@Bean
 	@ServiceConnection
 	LgtmStackContainer grafanaLgtmContainer() {
-		return new LgtmStackContainer(DockerImageName.parse("grafana/otel-lgtm:latest"));
+		// Pinned, not :latest - the floating tag makes a passing build today no guarantee of a
+		// passing build tomorrow if upstream ships a breaking change. 0.29.0 confirmed current via
+		// the Docker Hub API (its digest matches :latest's at the time of pinning), not guessed.
+		return new LgtmStackContainer(DockerImageName.parse("grafana/otel-lgtm:0.29.0"));
 	}
 
 	@Bean
@@ -26,7 +29,10 @@ public class TestcontainersConfiguration {
 	@Bean
 	@ServiceConnection(name = "redis")
 	GenericContainer<?> redisContainer() {
-		return new GenericContainer<>(DockerImageName.parse("redis:latest")).withExposedPorts(6379);
+		// redis:7-alpine, not :latest - also matches the version docker-compose.yaml actually runs in
+		// dev/prod (README's External Services table), so the test double and the real deployment
+		// target are the same major version instead of silently drifting apart.
+		return new GenericContainer<>(DockerImageName.parse("redis:7-alpine")).withExposedPorts(6379);
 	}
 
 }

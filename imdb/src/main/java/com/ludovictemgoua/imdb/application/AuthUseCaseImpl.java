@@ -47,7 +47,12 @@ public class AuthUseCaseImpl implements AuthUseCase {
 
     @Override
     public TokenPair refresh(String refreshToken) {
+        // Without the refreshToken() filter, a caller's own (short-lived) access token would also
+        // parse successfully here and mint a brand new token pair, extending their session past the
+        // access token's intended TTL without ever holding a real refresh token. Found by Copilot
+        // code review - the mirror image of the same gap in JwtAuthenticationFilter.
         var parsed = jwtService.parse(refreshToken)
+                .filter(JwtService.Parsed::refreshToken)
                 .orElseThrow(() -> new ForbiddenException("Invalid or expired refresh token"));
         User user = userRepository.findById(parsed.userId())
                 .orElseThrow(() -> new ForbiddenException("Invalid or expired refresh token"));

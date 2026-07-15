@@ -34,10 +34,4 @@ class OpenApiIntegrationTest {
         mockMvc.perform(get("/swagger-ui/index.html"))
                 .andExpect(status().isOk());
     }
-
-    @Test
-    void redocIsPubliclyAccessible() throws Exception {
-        mockMvc.perform(get("/redoc.html"))
-                .andExpect(status().isOk());
-    }
 }

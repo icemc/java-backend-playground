@@ -21,6 +21,18 @@ class JwtServiceTest {
 
         assertThat(parsed.userId()).isEqualTo(42);
         assertThat(parsed.roles()).containsExactlyInAnyOrder(Role.USER, Role.ADMIN);
+        assertThat(parsed.refreshToken()).isFalse();
+    }
+
+    @Test
+    void issuedRefreshTokenParsesBackWithNoRolesAndTheRefreshFlagSet() {
+        String token = jwtService.issueRefreshToken(42);
+
+        var parsed = jwtService.parse(token).orElseThrow();
+
+        assertThat(parsed.userId()).isEqualTo(42);
+        assertThat(parsed.roles()).isEmpty();
+        assertThat(parsed.refreshToken()).isTrue();
     }
 
     @Test

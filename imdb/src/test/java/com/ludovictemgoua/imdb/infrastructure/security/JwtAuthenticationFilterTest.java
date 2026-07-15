@@ -39,13 +39,25 @@ class JwtAuthenticationFilterTest {
     void populatesSecurityContextForAValidBearerToken() throws Exception {
         given(request.getHeader("Authorization")).willReturn("Bearer good-token");
         given(jwtService.parse("good-token"))
-                .willReturn(Optional.of(new JwtService.Parsed(7, Set.of(Role.USER))));
+                .willReturn(Optional.of(new JwtService.Parsed(7, Set.of(Role.USER), false)));
 
         new JwtAuthenticationFilter(jwtService).doFilterInternal(request, response, chain);
 
         var auth = SecurityContextHolder.getContext().getAuthentication();
         assertThat(auth.getName()).isEqualTo("7");
         assertThat(auth.getAuthorities()).extracting(Object::toString).containsExactly("ROLE_USER");
+        verify(chain).doFilter(request, response);
+    }
+
+    @Test
+    void leavesSecurityContextEmptyForARefreshTokenPresentedAsBearerAuth() throws Exception {
+        given(request.getHeader("Authorization")).willReturn("Bearer refresh-token");
+        given(jwtService.parse("refresh-token"))
+                .willReturn(Optional.of(new JwtService.Parsed(7, Set.of(), true)));
+
+        new JwtAuthenticationFilter(jwtService).doFilterInternal(request, response, chain);
+
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
         verify(chain).doFilter(request, response);
     }
 
