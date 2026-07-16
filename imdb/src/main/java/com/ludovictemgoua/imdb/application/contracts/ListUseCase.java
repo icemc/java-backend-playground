@@ -1,7 +1,7 @@
 package com.ludovictemgoua.imdb.application.contracts;
 
-import com.ludovictemgoua.imdb.application.CreateListRequest;
-import com.ludovictemgoua.imdb.application.UpdateListRequest;
+import com.ludovictemgoua.imdb.application.rest.CreateListRequest;
+import com.ludovictemgoua.imdb.application.rest.UpdateListRequest;
 import com.ludovictemgoua.imdb.domain.model.CustomList;
 import com.ludovictemgoua.imdb.domain.model.CustomListView;
 import com.ludovictemgoua.imdb.domain.model.PagedResult;

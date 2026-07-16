@@ -1,5 +1,6 @@
 package com.ludovictemgoua.imdb.application;
 
+import com.ludovictemgoua.imdb.application.rest.UpdateProfileRequest;
 import com.ludovictemgoua.imdb.domain.exception.ConflictException;
 import com.ludovictemgoua.imdb.domain.exception.NotFoundException;
 import com.ludovictemgoua.imdb.domain.model.Role;

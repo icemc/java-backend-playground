@@ -1,4 +1,4 @@
-package com.ludovictemgoua.imdb.application;
+package com.ludovictemgoua.imdb.application.rest;
 
 import com.ludovictemgoua.imdb.domain.model.Visibility;
 import jakarta.validation.constraints.NotNull;

@@ -1,8 +1,8 @@
 package com.ludovictemgoua.imdb.presentation;
 
-import com.ludovictemgoua.imdb.application.LoginRequest;
-import com.ludovictemgoua.imdb.application.RegisterRequest;
-import com.ludovictemgoua.imdb.application.TokenPair;
+import com.ludovictemgoua.imdb.application.rest.LoginRequest;
+import com.ludovictemgoua.imdb.application.rest.RegisterRequest;
+import com.ludovictemgoua.imdb.application.rest.TokenPair;
 import com.ludovictemgoua.imdb.application.contracts.AuthUseCase;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;

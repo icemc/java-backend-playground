@@ -1,6 +1,6 @@
 package com.ludovictemgoua.imdb.application.contracts;
 
-import com.ludovictemgoua.imdb.application.UpdateProfileRequest;
+import com.ludovictemgoua.imdb.application.rest.UpdateProfileRequest;
 import com.ludovictemgoua.imdb.domain.model.PagedResult;
 import com.ludovictemgoua.imdb.domain.model.PublicUserProfile;
 import com.ludovictemgoua.imdb.domain.model.Role;

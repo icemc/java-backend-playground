@@ -1,8 +1,8 @@
 package com.ludovictemgoua.imdb.presentation;
 
-import com.ludovictemgoua.imdb.application.PathStep;
-import com.ludovictemgoua.imdb.application.PersonRef;
-import com.ludovictemgoua.imdb.application.SixDegreesResult;
+import com.ludovictemgoua.imdb.application.rest.PathStep;
+import com.ludovictemgoua.imdb.application.rest.PersonRef;
+import com.ludovictemgoua.imdb.application.rest.SixDegreesResult;
 import com.ludovictemgoua.imdb.application.contracts.PersonAdminUseCase;
 import com.ludovictemgoua.imdb.application.contracts.SixDegreesOutcome;
 import com.ludovictemgoua.imdb.application.contracts.SixDegreesUseCase;

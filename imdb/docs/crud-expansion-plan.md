@@ -869,6 +869,8 @@ git commit -m "Add JwtAuthenticationFilter, security filter chain, and ProblemDe
 ```java
 package com.ludovictemgoua.imdb.application;
 
+import com.ludovictemgoua.imdb.application.rest.LoginRequest;
+import com.ludovictemgoua.imdb.application.rest.RegisterRequest;
 import com.ludovictemgoua.imdb.domain.exception.ConflictException;
 import com.ludovictemgoua.imdb.domain.model.Role;
 import com.ludovictemgoua.imdb.domain.model.User;
@@ -1026,17 +1028,15 @@ public record TokenPair(String accessToken, String refreshToken) {
 ```java
 package com.ludovictemgoua.imdb.application.contracts;
 
-import com.ludovictemgoua.imdb.application.LoginRequest;
-import com.ludovictemgoua.imdb.application.RegisterRequest;
-import com.ludovictemgoua.imdb.application.TokenPair;
+import com.ludovictemgoua.imdb.application.rest.TokenPair;
 
 public interface AuthUseCase {
 
-    TokenPair register(RegisterRequest request);
+  TokenPair register(com.ludovictemgoua.imdb.application.rest.RegisterRequest request);
 
-    TokenPair login(LoginRequest request);
+  com.ludovictemgoua.imdb.application.rest.TokenPair login(com.ludovictemgoua.imdb.application.rest.LoginRequest request);
 
-    TokenPair refresh(String refreshToken);
+  com.ludovictemgoua.imdb.application.rest.TokenPair refresh(String refreshToken);
 }
 ```
 
@@ -1044,6 +1044,9 @@ public interface AuthUseCase {
 package com.ludovictemgoua.imdb.application;
 
 import com.ludovictemgoua.imdb.application.contracts.AuthUseCase;
+import com.ludovictemgoua.imdb.application.rest.LoginRequest;
+import com.ludovictemgoua.imdb.application.rest.RegisterRequest;
+import com.ludovictemgoua.imdb.application.rest.TokenPair;
 import com.ludovictemgoua.imdb.domain.exception.ConflictException;
 import com.ludovictemgoua.imdb.domain.exception.ForbiddenException;
 import com.ludovictemgoua.imdb.domain.model.Role;
@@ -1058,50 +1061,50 @@ import java.util.Set;
 @Service
 public class AuthUseCaseImpl implements AuthUseCase {
 
-    private final UserRepository userRepository;
-    private final JwtService jwtService;
-    private final PasswordEncoder passwordEncoder;
+  private final UserRepository userRepository;
+  private final JwtService jwtService;
+  private final PasswordEncoder passwordEncoder;
 
-    public AuthUseCaseImpl(UserRepository userRepository, JwtService jwtService, PasswordEncoder passwordEncoder) {
-        this.userRepository = userRepository;
-        this.jwtService = jwtService;
-        this.passwordEncoder = passwordEncoder;
-    }
+  public AuthUseCaseImpl(UserRepository userRepository, JwtService jwtService, PasswordEncoder passwordEncoder) {
+    this.userRepository = userRepository;
+    this.jwtService = jwtService;
+    this.passwordEncoder = passwordEncoder;
+  }
 
-    @Override
-    public TokenPair register(RegisterRequest request) {
-        if (userRepository.existsByEmail(request.email())) {
-            throw new ConflictException("An account with this email already exists");
-        }
-        String hash = passwordEncoder.encode(request.password());
-        User user = userRepository.insert(request.email(), hash, request.displayName(), Role.USER);
-        return issueTokens(user);
+  @Override
+  public TokenPair register(RegisterRequest request) {
+    if (userRepository.existsByEmail(request.email())) {
+      throw new ConflictException("An account with this email already exists");
     }
+    String hash = passwordEncoder.encode(request.password());
+    User user = userRepository.insert(request.email(), hash, request.displayName(), Role.USER);
+    return issueTokens(user);
+  }
 
-    @Override
-    public TokenPair login(LoginRequest request) {
-        User user = userRepository.findByEmail(request.email())
-                .orElseThrow(() -> new ForbiddenException("Invalid email or password"));
-        if (!passwordEncoder.matches(request.password(), user.passwordHash())) {
-            throw new ForbiddenException("Invalid email or password");
-        }
-        return issueTokens(user);
+  @Override
+  public TokenPair login(LoginRequest request) {
+    User user = userRepository.findByEmail(request.email())
+            .orElseThrow(() -> new ForbiddenException("Invalid email or password"));
+    if (!passwordEncoder.matches(request.password(), user.passwordHash())) {
+      throw new ForbiddenException("Invalid email or password");
     }
+    return issueTokens(user);
+  }
 
-    @Override
-    public TokenPair refresh(String refreshToken) {
-        var parsed = jwtService.parse(refreshToken)
-                .orElseThrow(() -> new ForbiddenException("Invalid or expired refresh token"));
-        User user = userRepository.findById(parsed.userId())
-                .orElseThrow(() -> new ForbiddenException("Invalid or expired refresh token"));
-        return issueTokens(user);
-    }
+  @Override
+  public TokenPair refresh(String refreshToken) {
+    var parsed = jwtService.parse(refreshToken)
+            .orElseThrow(() -> new ForbiddenException("Invalid or expired refresh token"));
+    User user = userRepository.findById(parsed.userId())
+            .orElseThrow(() -> new ForbiddenException("Invalid or expired refresh token"));
+    return issueTokens(user);
+  }
 
-    private TokenPair issueTokens(User user) {
-        String access = jwtService.issueAccessToken(user.id(), Set.of(user.role()));
-        String refresh = jwtService.issueRefreshToken(user.id());
-        return new TokenPair(access, refresh);
-    }
+  private TokenPair issueTokens(User user) {
+    String access = jwtService.issueAccessToken(user.id(), Set.of(user.role()));
+    String refresh = jwtService.issueRefreshToken(user.id());
+    return new TokenPair(access, refresh);
+  }
 }
 ```
 
@@ -1115,9 +1118,7 @@ Expected: PASS, 4 tests green.
 ```java
 package com.ludovictemgoua.imdb.presentation;
 
-import com.ludovictemgoua.imdb.application.LoginRequest;
-import com.ludovictemgoua.imdb.application.RegisterRequest;
-import com.ludovictemgoua.imdb.application.TokenPair;
+import com.ludovictemgoua.imdb.application.rest.RegisterRequest;
 import com.ludovictemgoua.imdb.application.contracts.AuthUseCase;
 import com.ludovictemgoua.imdb.domain.exception.ConflictException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -1137,50 +1138,50 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @WithAnonymousUser
 class AuthControllerTest {
 
-    @Autowired
-    MockMvc mockMvc;
-    @Autowired
-    ObjectMapper objectMapper;
-    @MockitoBean
-    AuthUseCase authUseCase;
+  @Autowired
+  MockMvc mockMvc;
+  @Autowired
+  ObjectMapper objectMapper;
+  @MockitoBean
+  AuthUseCase authUseCase;
 
-    @Test
-    void registerReturns201WithTokens() throws Exception {
-        given(authUseCase.register(new RegisterRequest("ada@example.com", "password123", "Ada")))
-                .willReturn(new TokenPair("access", "refresh"));
+  @Test
+  void registerReturns201WithTokens() throws Exception {
+    given(authUseCase.register(new RegisterRequest("ada@example.com", "password123", "Ada")))
+            .willReturn(new com.ludovictemgoua.imdb.application.rest.TokenPair("access", "refresh"));
 
-        mockMvc.perform(post("/api/v1/auth/register")
-                        .contentType("application/json")
-                        .content(objectMapper.writeValueAsString(
-                                new RegisterRequest("ada@example.com", "password123", "Ada"))))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.accessToken").value("access"));
-    }
+    mockMvc.perform(post("/api/v1/auth/register")
+                    .contentType("application/json")
+                    .content(objectMapper.writeValueAsString(
+                            new RegisterRequest("ada@example.com", "password123", "Ada"))))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.accessToken").value("access"));
+  }
 
-    @Test
-    void registerReturns409ForADuplicateEmail() throws Exception {
-        given(authUseCase.register(new RegisterRequest("ada@example.com", "password123", "Ada")))
-                .willThrow(new ConflictException("An account with this email already exists"));
+  @Test
+  void registerReturns409ForADuplicateEmail() throws Exception {
+    given(authUseCase.register(new RegisterRequest("ada@example.com", "password123", "Ada")))
+            .willThrow(new ConflictException("An account with this email already exists"));
 
-        mockMvc.perform(post("/api/v1/auth/register")
-                        .contentType("application/json")
-                        .content(objectMapper.writeValueAsString(
-                                new RegisterRequest("ada@example.com", "password123", "Ada"))))
-                .andExpect(status().isConflict());
-    }
+    mockMvc.perform(post("/api/v1/auth/register")
+                    .contentType("application/json")
+                    .content(objectMapper.writeValueAsString(
+                            new RegisterRequest("ada@example.com", "password123", "Ada"))))
+            .andExpect(status().isConflict());
+  }
 
-    @Test
-    void loginReturnsTokensForValidCredentials() throws Exception {
-        given(authUseCase.login(new LoginRequest("ada@example.com", "password123")))
-                .willReturn(new TokenPair("access", "refresh"));
+  @Test
+  void loginReturnsTokensForValidCredentials() throws Exception {
+    given(authUseCase.login(new com.ludovictemgoua.imdb.application.rest.LoginRequest("ada@example.com", "password123")))
+            .willReturn(new com.ludovictemgoua.imdb.application.rest.TokenPair("access", "refresh"));
 
-        mockMvc.perform(post("/api/v1/auth/login")
-                        .contentType("application/json")
-                        .content(objectMapper.writeValueAsString(
-                                new LoginRequest("ada@example.com", "password123"))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.refreshToken").value("refresh"));
-    }
+    mockMvc.perform(post("/api/v1/auth/login")
+                    .contentType("application/json")
+                    .content(objectMapper.writeValueAsString(
+                            new com.ludovictemgoua.imdb.application.rest.LoginRequest("ada@example.com", "password123"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.refreshToken").value("refresh"));
+  }
 }
 ```
 
@@ -1194,14 +1195,12 @@ Expected: FAIL - `AuthController` doesn't exist yet.
 ```java
 package com.ludovictemgoua.imdb.presentation;
 
-import com.ludovictemgoua.imdb.application.LoginRequest;
-import com.ludovictemgoua.imdb.application.RegisterRequest;
-import com.ludovictemgoua.imdb.application.TokenPair;
+import com.ludovictemgoua.imdb.application.rest.LoginRequest;
+import com.ludovictemgoua.imdb.application.rest.RegisterRequest;
+import com.ludovictemgoua.imdb.application.rest.TokenPair;
 import com.ludovictemgoua.imdb.application.contracts.AuthUseCase;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -1213,30 +1212,30 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/auth")
 public class AuthController {
 
-    private final AuthUseCase authUseCase;
+  private final AuthUseCase authUseCase;
 
-    public AuthController(AuthUseCase authUseCase) {
-        this.authUseCase = authUseCase;
-    }
+  public AuthController(AuthUseCase authUseCase) {
+    this.authUseCase = authUseCase;
+  }
 
-    @PostMapping("/register")
-    @ResponseStatus(HttpStatus.CREATED)
-    public TokenPair register(@Valid @RequestBody RegisterRequest request) {
-        return authUseCase.register(request);
-    }
+  @PostMapping("/register")
+  @ResponseStatus(HttpStatus.CREATED)
+  public TokenPair register(@Valid @RequestBody RegisterRequest request) {
+    return authUseCase.register(request);
+  }
 
-    @PostMapping("/login")
-    public TokenPair login(@Valid @RequestBody LoginRequest request) {
-        return authUseCase.login(request);
-    }
+  @PostMapping("/login")
+  public TokenPair login(@Valid @RequestBody LoginRequest request) {
+    return authUseCase.login(request);
+  }
 
-    @PostMapping("/refresh")
-    public TokenPair refresh(@RequestBody RefreshRequest request) {
-        return authUseCase.refresh(request.refreshToken());
-    }
+  @PostMapping("/refresh")
+  public com.ludovictemgoua.imdb.application.rest.TokenPair refresh(@RequestBody RefreshRequest request) {
+    return authUseCase.refresh(request.refreshToken());
+  }
 
-    public record RefreshRequest(@NotBlank String refreshToken) {
-    }
+  public record RefreshRequest(@NotBlank String refreshToken) {
+  }
 }
 ```
 
@@ -1528,6 +1527,7 @@ Expected: PASS, 4 tests green.
 ```java
 package com.ludovictemgoua.imdb.application;
 
+import com.ludovictemgoua.imdb.application.rest.UpdateProfileRequest;
 import com.ludovictemgoua.imdb.domain.exception.ConflictException;
 import com.ludovictemgoua.imdb.domain.exception.NotFoundException;
 import com.ludovictemgoua.imdb.domain.model.Role;
@@ -1632,7 +1632,7 @@ public record RoleRequest(@NotNull Role role) {
 ```java
 package com.ludovictemgoua.imdb.application.contracts;
 
-import com.ludovictemgoua.imdb.application.UpdateProfileRequest;
+import com.ludovictemgoua.imdb.application.rest.UpdateProfileRequest;
 import com.ludovictemgoua.imdb.domain.model.PagedResult;
 import com.ludovictemgoua.imdb.domain.model.PublicUserProfile;
 import com.ludovictemgoua.imdb.domain.model.Role;
@@ -1660,6 +1660,7 @@ public interface UserUseCase {
 package com.ludovictemgoua.imdb.application;
 
 import com.ludovictemgoua.imdb.application.contracts.UserUseCase;
+import com.ludovictemgoua.imdb.application.rest.UpdateProfileRequest;
 import com.ludovictemgoua.imdb.domain.exception.ConflictException;
 import com.ludovictemgoua.imdb.domain.exception.NotFoundException;
 import com.ludovictemgoua.imdb.domain.model.PagedResult;
@@ -1690,8 +1691,10 @@ public class UserUseCaseImpl implements UserUseCase {
         WriteResult result = userRepository.updateProfile(userId, request.displayName(), request.bio(), request.version());
         switch (result) {
             case NOT_FOUND -> throw new NotFoundException("No user with id " + userId);
-            case VERSION_CONFLICT -> throw new ConflictException("Your profile was modified concurrently - refresh and retry");
-            case SUCCESS -> { }
+            case VERSION_CONFLICT ->
+                    throw new ConflictException("Your profile was modified concurrently - refresh and retry");
+            case SUCCESS -> {
+            }
         }
         return getOwnProfile(userId);
     }
@@ -1812,8 +1815,8 @@ Expected: FAIL - `UserController` doesn't exist yet.
 ```java
 package com.ludovictemgoua.imdb.presentation;
 
-import com.ludovictemgoua.imdb.application.RoleRequest;
-import com.ludovictemgoua.imdb.application.UpdateProfileRequest;
+import com.ludovictemgoua.imdb.application.rest.RoleRequest;
+import com.ludovictemgoua.imdb.application.rest.UpdateProfileRequest;
 import com.ludovictemgoua.imdb.application.contracts.UserUseCase;
 import com.ludovictemgoua.imdb.domain.model.PagedResult;
 import com.ludovictemgoua.imdb.domain.model.PublicUserProfile;
@@ -2443,6 +2446,8 @@ git commit -m "Add TitleRepository write methods: insert/update/soft-delete/crew
 ```java
 package com.ludovictemgoua.imdb.application;
 
+import com.ludovictemgoua.imdb.application.rest.CreateTitleRequest;
+import com.ludovictemgoua.imdb.application.rest.UpdateTitleRequest;
 import com.ludovictemgoua.imdb.domain.exception.ConflictException;
 import com.ludovictemgoua.imdb.domain.exception.NotFoundException;
 import com.ludovictemgoua.imdb.domain.model.TitleCore;
@@ -2581,11 +2586,9 @@ public record RatingRequest(@DecimalMin("0.0") @DecimalMax("10.0") double averag
 ```java
 package com.ludovictemgoua.imdb.application.contracts;
 
-import com.ludovictemgoua.imdb.application.CreateTitleRequest;
-import com.ludovictemgoua.imdb.application.CrewRequest;
-import com.ludovictemgoua.imdb.application.PatchTitleRequest;
-import com.ludovictemgoua.imdb.application.RatingRequest;
-import com.ludovictemgoua.imdb.application.UpdateTitleRequest;
+import com.ludovictemgoua.imdb.application.rest.CreateTitleRequest;
+import com.ludovictemgoua.imdb.application.rest.CrewRequest;
+import com.ludovictemgoua.imdb.application.rest.UpdateTitleRequest;
 import com.ludovictemgoua.imdb.domain.model.TitleCore;
 
 public interface TitleAdminUseCase {
@@ -2594,13 +2597,13 @@ public interface TitleAdminUseCase {
 
     TitleCore update(String titleId, UpdateTitleRequest request);
 
-    TitleCore patch(String titleId, PatchTitleRequest request);
+    TitleCore patch(String titleId, com.ludovictemgoua.imdb.application.rest.PatchTitleRequest request);
 
     void delete(String titleId);
 
     void upsertCrew(String titleId, CrewRequest request);
 
-    void upsertRating(String titleId, RatingRequest request);
+    void upsertRating(String titleId, com.ludovictemgoua.imdb.application.rest.RatingRequest request);
 
     void deleteRating(String titleId);
 }
@@ -2610,6 +2613,7 @@ public interface TitleAdminUseCase {
 package com.ludovictemgoua.imdb.application;
 
 import com.ludovictemgoua.imdb.application.contracts.TitleAdminUseCase;
+import com.ludovictemgoua.imdb.application.rest.*;
 import com.ludovictemgoua.imdb.domain.exception.ConflictException;
 import com.ludovictemgoua.imdb.domain.exception.NotFoundException;
 import com.ludovictemgoua.imdb.domain.model.TitleCore;
@@ -2696,7 +2700,8 @@ public class TitleAdminUseCaseImpl implements TitleAdminUseCase {
             case NOT_FOUND -> throw new NotFoundException("No title with id " + titleId);
             case VERSION_CONFLICT -> throw new ConflictException(
                     "Title " + titleId + " was modified by someone else - refresh and retry");
-            case SUCCESS -> { }
+            case SUCCESS -> {
+            }
         }
     }
 }
@@ -2712,12 +2717,10 @@ Expected: PASS, 4 tests green.
 ```java
 package com.ludovictemgoua.imdb.infrastructure.cache;
 
-import com.ludovictemgoua.imdb.application.CreateTitleRequest;
-import com.ludovictemgoua.imdb.application.CrewRequest;
-import com.ludovictemgoua.imdb.application.PatchTitleRequest;
-import com.ludovictemgoua.imdb.application.RatingRequest;
+import com.ludovictemgoua.imdb.application.rest.CreateTitleRequest;
+import com.ludovictemgoua.imdb.application.rest.PatchTitleRequest;
+import com.ludovictemgoua.imdb.application.rest.RatingRequest;
 import com.ludovictemgoua.imdb.application.TitleAdminUseCaseImpl;
-import com.ludovictemgoua.imdb.application.UpdateTitleRequest;
 import com.ludovictemgoua.imdb.application.contracts.TitleAdminUseCase;
 import com.ludovictemgoua.imdb.domain.model.TitleCore;
 import org.springframework.cache.annotation.CacheEvict;
@@ -2747,7 +2750,7 @@ public class CachingTitleAdminUseCase implements TitleAdminUseCase {
 
     @Override
     @CacheEvict(cacheNames = "title-detail", key = "#titleId")
-    public TitleCore update(String titleId, UpdateTitleRequest request) {
+    public TitleCore update(String titleId, com.ludovictemgoua.imdb.application.rest.UpdateTitleRequest request) {
         return delegate.update(titleId, request);
     }
 
@@ -2765,7 +2768,7 @@ public class CachingTitleAdminUseCase implements TitleAdminUseCase {
 
     @Override
     @CacheEvict(cacheNames = "title-detail", key = "#titleId")
-    public void upsertCrew(String titleId, CrewRequest request) {
+    public void upsertCrew(String titleId, com.ludovictemgoua.imdb.application.rest.CrewRequest request) {
         delegate.upsertCrew(titleId, request);
     }
 
@@ -2838,69 +2841,71 @@ Expected: FAIL - `TitleController` has no `POST /api/v1/titles` mapping yet.
 - [ ] **Step 9: Add the admin endpoints to `TitleController`**
 
 ```java
-    private final TitleAdminUseCase titleAdminUseCase;
+    import com.ludovictemgoua.imdb.application.rest.*;
 
-    public TitleController(TitleSearchUseCase searchUseCase, TitleDetailUseCase detailUseCase,
-                            TitleAdminUseCase titleAdminUseCase) {
-        this.searchUseCase = searchUseCase;
-        this.detailUseCase = detailUseCase;
-        this.titleAdminUseCase = titleAdminUseCase;
-    }
+private final TitleAdminUseCase titleAdminUseCase;
 
-    @PostMapping
-    @org.springframework.http.HttpStatus.CREATED // placeholder marker removed below - see @ResponseStatus line
-    @org.springframework.web.bind.annotation.ResponseStatus(org.springframework.http.HttpStatus.CREATED)
-    @org.springframework.security.access.prepost.PreAuthorize("hasRole('ADMIN')")
-    public TitleCore create(@jakarta.validation.Valid @org.springframework.web.bind.annotation.RequestBody
-                             com.ludovictemgoua.imdb.application.CreateTitleRequest request) {
-        return titleAdminUseCase.create(request);
-    }
+public TitleController(TitleSearchUseCase searchUseCase, TitleDetailUseCase detailUseCase,
+                       TitleAdminUseCase titleAdminUseCase) {
+    this.searchUseCase = searchUseCase;
+    this.detailUseCase = detailUseCase;
+    this.titleAdminUseCase = titleAdminUseCase;
+}
 
-    @org.springframework.web.bind.annotation.PutMapping("/{titleId}")
-    @org.springframework.security.access.prepost.PreAuthorize("hasRole('ADMIN')")
-    public TitleCore update(@PathVariable String titleId,
-                            @jakarta.validation.Valid @org.springframework.web.bind.annotation.RequestBody
-                            com.ludovictemgoua.imdb.application.UpdateTitleRequest request) {
-        return titleAdminUseCase.update(titleId, request);
-    }
+@PostMapping
+@org.springframework.http.HttpStatus.CREATED // placeholder marker removed below - see @ResponseStatus line
+@org.springframework.web.bind.annotation.ResponseStatus(org.springframework.http.HttpStatus.CREATED)
+@org.springframework.security.access.prepost.PreAuthorize("hasRole('ADMIN')")
+public TitleCore create(@jakarta.validation.Valid @org.springframework.web.bind.annotation.RequestBody
+                        com.ludovictemgoua.imdb.application.rest.CreateTitleRequest request) {
+    return titleAdminUseCase.create(request);
+}
 
-    @org.springframework.web.bind.annotation.PatchMapping("/{titleId}")
-    @org.springframework.security.access.prepost.PreAuthorize("hasRole('ADMIN')")
-    public TitleCore patch(@PathVariable String titleId,
-                           @org.springframework.web.bind.annotation.RequestBody
-                           com.ludovictemgoua.imdb.application.PatchTitleRequest request) {
-        return titleAdminUseCase.patch(titleId, request);
-    }
+@org.springframework.web.bind.annotation.PutMapping("/{titleId}")
+@org.springframework.security.access.prepost.PreAuthorize("hasRole('ADMIN')")
+public TitleCore update(@PathVariable String titleId,
+                        @jakarta.validation.Valid @org.springframework.web.bind.annotation.RequestBody
+                        com.ludovictemgoua.imdb.application.rest.UpdateTitleRequest request) {
+    return titleAdminUseCase.update(titleId, request);
+}
 
-    @org.springframework.web.bind.annotation.DeleteMapping("/{titleId}")
-    @org.springframework.web.bind.annotation.ResponseStatus(org.springframework.http.HttpStatus.NO_CONTENT)
-    @org.springframework.security.access.prepost.PreAuthorize("hasRole('ADMIN')")
-    public void delete(@PathVariable String titleId) {
-        titleAdminUseCase.delete(titleId);
-    }
+@org.springframework.web.bind.annotation.PatchMapping("/{titleId}")
+@org.springframework.security.access.prepost.PreAuthorize("hasRole('ADMIN')")
+public TitleCore patch(@PathVariable String titleId,
+                       @org.springframework.web.bind.annotation.RequestBody
+                       com.ludovictemgoua.imdb.application.rest.PatchTitleRequest request) {
+    return titleAdminUseCase.patch(titleId, request);
+}
 
-    @org.springframework.web.bind.annotation.PutMapping("/{titleId}/crew")
-    @org.springframework.security.access.prepost.PreAuthorize("hasRole('ADMIN')")
-    public void upsertCrew(@PathVariable String titleId,
-                           @org.springframework.web.bind.annotation.RequestBody
-                           com.ludovictemgoua.imdb.application.CrewRequest request) {
-        titleAdminUseCase.upsertCrew(titleId, request);
-    }
+@org.springframework.web.bind.annotation.DeleteMapping("/{titleId}")
+@org.springframework.web.bind.annotation.ResponseStatus(org.springframework.http.HttpStatus.NO_CONTENT)
+@org.springframework.security.access.prepost.PreAuthorize("hasRole('ADMIN')")
+public void delete(@PathVariable String titleId) {
+    titleAdminUseCase.delete(titleId);
+}
 
-    @org.springframework.web.bind.annotation.PutMapping("/{titleId}/rating")
-    @org.springframework.security.access.prepost.PreAuthorize("hasRole('ADMIN')")
-    public void upsertRating(@PathVariable String titleId,
-                             @jakarta.validation.Valid @org.springframework.web.bind.annotation.RequestBody
-                             com.ludovictemgoua.imdb.application.RatingRequest request) {
-        titleAdminUseCase.upsertRating(titleId, request);
-    }
+@org.springframework.web.bind.annotation.PutMapping("/{titleId}/crew")
+@org.springframework.security.access.prepost.PreAuthorize("hasRole('ADMIN')")
+public void upsertCrew(@PathVariable String titleId,
+                       @org.springframework.web.bind.annotation.RequestBody
+                       com.ludovictemgoua.imdb.application.rest.CrewRequest request) {
+    titleAdminUseCase.upsertCrew(titleId, request);
+}
 
-    @org.springframework.web.bind.annotation.DeleteMapping("/{titleId}/rating")
-    @org.springframework.web.bind.annotation.ResponseStatus(org.springframework.http.HttpStatus.NO_CONTENT)
-    @org.springframework.security.access.prepost.PreAuthorize("hasRole('ADMIN')")
-    public void deleteRating(@PathVariable String titleId) {
-        titleAdminUseCase.deleteRating(titleId);
-    }
+@org.springframework.web.bind.annotation.PutMapping("/{titleId}/rating")
+@org.springframework.security.access.prepost.PreAuthorize("hasRole('ADMIN')")
+public void upsertRating(@PathVariable String titleId,
+                         @jakarta.validation.Valid @org.springframework.web.bind.annotation.RequestBody
+                         com.ludovictemgoua.imdb.application.rest.RatingRequest request) {
+    titleAdminUseCase.upsertRating(titleId, request);
+}
+
+@org.springframework.web.bind.annotation.DeleteMapping("/{titleId}/rating")
+@org.springframework.web.bind.annotation.ResponseStatus(org.springframework.http.HttpStatus.NO_CONTENT)
+@org.springframework.security.access.prepost.PreAuthorize("hasRole('ADMIN')")
+public void deleteRating(@PathVariable String titleId) {
+    titleAdminUseCase.deleteRating(titleId);
+}
 ```
 
 Replace the fully-qualified names above with proper `import` statements at the top of the file (matching
@@ -3251,6 +3256,8 @@ git commit -m "Add PersonRepository write methods: insert/update/soft-delete"
 ```java
 package com.ludovictemgoua.imdb.application;
 
+import com.ludovictemgoua.imdb.application.rest.CreatePersonRequest;
+import com.ludovictemgoua.imdb.application.rest.UpdatePersonRequest;
 import com.ludovictemgoua.imdb.domain.exception.ConflictException;
 import com.ludovictemgoua.imdb.domain.exception.NotFoundException;
 import com.ludovictemgoua.imdb.domain.model.PersonCore;
@@ -3351,16 +3358,14 @@ public record PatchPersonRequest(String primaryName, Integer birthYear, Integer 
 ```java
 package com.ludovictemgoua.imdb.application.contracts;
 
-import com.ludovictemgoua.imdb.application.CreatePersonRequest;
-import com.ludovictemgoua.imdb.application.PatchPersonRequest;
-import com.ludovictemgoua.imdb.application.UpdatePersonRequest;
+com.ludovictemgoua.imdb.application.rest.PatchPersonRequest;
 import com.ludovictemgoua.imdb.domain.model.PersonCore;
 
 public interface PersonAdminUseCase {
 
-    PersonCore create(CreatePersonRequest request);
+    PersonCore create(com.ludovictemgoua.imdb.application.rest.CreatePersonRequest request);
 
-    PersonCore update(String personId, UpdatePersonRequest request);
+    PersonCore update(String personId, com.ludovictemgoua.imdb.application.rest.UpdatePersonRequest request);
 
     PersonCore patch(String personId, PatchPersonRequest request);
 
@@ -3372,6 +3377,9 @@ public interface PersonAdminUseCase {
 package com.ludovictemgoua.imdb.application;
 
 import com.ludovictemgoua.imdb.application.contracts.PersonAdminUseCase;
+import com.ludovictemgoua.imdb.application.rest.CreatePersonRequest;
+import com.ludovictemgoua.imdb.application.rest.PatchPersonRequest;
+import com.ludovictemgoua.imdb.application.rest.UpdatePersonRequest;
 import com.ludovictemgoua.imdb.domain.exception.ConflictException;
 import com.ludovictemgoua.imdb.domain.exception.NotFoundException;
 import com.ludovictemgoua.imdb.domain.model.PersonCore;
@@ -3427,7 +3435,8 @@ public class PersonAdminUseCaseImpl implements PersonAdminUseCase {
             case NOT_FOUND -> throw new NotFoundException("No person with id " + personId);
             case VERSION_CONFLICT -> throw new ConflictException(
                     "Person " + personId + " was modified by someone else - refresh and retry");
-            case SUCCESS -> { }
+            case SUCCESS -> {
+            }
         }
     }
 }
@@ -3467,7 +3476,7 @@ Expected: FAIL - `PersonController` has no `POST /api/v1/people` mapping yet.
 - [ ] **Step 8: Add the admin endpoints to `PersonController`**
 
 Add these imports: `com.ludovictemgoua.imdb.application.contracts.PersonAdminUseCase`,
-`com.ludovictemgoua.imdb.application.CreatePersonRequest`, `UpdatePersonRequest`, `PatchPersonRequest`,
+`com.ludovictemgoua.imdb.application.rest.CreatePersonRequest`, `UpdatePersonRequest`, `PatchPersonRequest`,
 `com.ludovictemgoua.imdb.domain.model.PersonCore`, `jakarta.validation.Valid`,
 `org.springframework.http.HttpStatus`, `org.springframework.security.access.prepost.PreAuthorize`,
 `org.springframework.web.bind.annotation.{PostMapping,PutMapping,PatchMapping,DeleteMapping,RequestBody,ResponseStatus}`:
@@ -3846,10 +3855,10 @@ Create `CachingPersonAdminUseCase`:
 ```java
 package com.ludovictemgoua.imdb.infrastructure.cache;
 
-import com.ludovictemgoua.imdb.application.CreatePersonRequest;
-import com.ludovictemgoua.imdb.application.PatchPersonRequest;
+import com.ludovictemgoua.imdb.application.rest.CreatePersonRequest;
+import com.ludovictemgoua.imdb.application.rest.PatchPersonRequest;
 import com.ludovictemgoua.imdb.application.PersonAdminUseCaseImpl;
-import com.ludovictemgoua.imdb.application.UpdatePersonRequest;
+import com.ludovictemgoua.imdb.application.rest.UpdatePersonRequest;
 import com.ludovictemgoua.imdb.application.contracts.PersonAdminUseCase;
 import com.ludovictemgoua.imdb.domain.model.PersonCore;
 import org.springframework.cache.annotation.CacheEvict;
@@ -3927,7 +3936,7 @@ public class CachingPersonAdminUseCase implements PersonAdminUseCase {
 ```
 
 Add `import com.ludovictemgoua.imdb.domain.model.PrincipalCredit;` and
-`import com.ludovictemgoua.imdb.application.PrincipalRequest;` to `TitleController.java`'s imports (all the
+`import com.ludovictemgoua.imdb.application.rest.PrincipalRequest;` to `TitleController.java`'s imports (all the
 Spring annotation imports needed here were already added in Task 3.2's cleanup).
 
 - [ ] **Step 7: Run the full unit and integration suites**
@@ -3962,9 +3971,7 @@ specific previously-cached key is gone.
 package com.ludovictemgoua.imdb.infrastructure.cache;
 
 import com.ludovictemgoua.imdb.TestcontainersConfiguration;
-import com.ludovictemgoua.imdb.application.PatchPersonRequest;
-import com.ludovictemgoua.imdb.application.RatingRequest;
-import com.ludovictemgoua.imdb.application.UpdateTitleRequest;
+import com.ludovictemgoua.imdb.application.rest.RatingRequest;
 import com.ludovictemgoua.imdb.application.contracts.PersonAdminUseCase;
 import com.ludovictemgoua.imdb.application.contracts.TitleAdminUseCase;
 import com.ludovictemgoua.imdb.application.contracts.TitleDetailUseCase;
@@ -4004,7 +4011,7 @@ class CacheEvictionIntegrationTest {
         assertThat(cacheManager.getCache("title-detail").get("tt0000100")).isNotNull();
 
         var current = titleDetailUseCase.getDetail("tt0000100");
-        titleAdminUseCase.update("tt0000100", new UpdateTitleRequest(
+        titleAdminUseCase.update("tt0000100", new com.ludovictemgoua.imdb.application.rest.UpdateTitleRequest(
                 current.primaryTitle(), current.originalTitle(), current.titleType(),
                 current.startYear(), current.endYear(), current.runtimeMinutes(), current.genres(), 0));
 
@@ -4028,7 +4035,7 @@ class CacheEvictionIntegrationTest {
         // and call sixDegreesUseCase.compute("nm0000001", "nm0000002", 7) here, then assert
         // cacheManager.getCache("six-degrees").get("1-2") is not null (matching the "min-max" key
         // convention, LLD §6) before calling personAdminUseCase.patch(...) below and re-asserting null.
-        personAdminUseCase.patch("nm0000001", new PatchPersonRequest("Kevin Bacon Jr.", null, null, List.of(), 0));
+        personAdminUseCase.patch("nm0000001", new com.ludovictemgoua.imdb.application.rest.PatchPersonRequest("Kevin Bacon Jr.", null, null, List.of(), 0));
 
         assertThat(cacheManager.getCache("six-degrees").get("1-2")).isNull();
     }
@@ -4612,8 +4619,7 @@ Expected: FAIL - `WatchlistController` doesn't exist yet.
 ```java
 package com.ludovictemgoua.imdb.presentation;
 
-import com.ludovictemgoua.imdb.application.AddWatchlistItemRequest;
-import com.ludovictemgoua.imdb.application.VisibilityRequest;
+import com.ludovictemgoua.imdb.application.rest.AddWatchlistItemRequest;
 import com.ludovictemgoua.imdb.application.contracts.WatchlistUseCase;
 import com.ludovictemgoua.imdb.domain.model.WatchlistView;
 import com.ludovictemgoua.imdb.infrastructure.security.CurrentUser;
@@ -4656,7 +4662,7 @@ public class WatchlistController {
     }
 
     @PutMapping("/api/v1/watchlist/visibility")
-    public void updateVisibility(Authentication authentication, @Valid @RequestBody VisibilityRequest request) {
+    public void updateVisibility(Authentication authentication, @Valid @RequestBody com.ludovictemgoua.imdb.application.rest.VisibilityRequest request) {
         watchlistUseCase.updateVisibility(CurrentUser.requireId(authentication), request.visibility());
     }
 
@@ -5022,6 +5028,7 @@ git commit -m "Add reviews table and ReviewRepository"
 ```java
 package com.ludovictemgoua.imdb.application;
 
+import com.ludovictemgoua.imdb.application.rest.ReviewRequest;
 import com.ludovictemgoua.imdb.domain.exception.ConflictException;
 import com.ludovictemgoua.imdb.domain.model.Review;
 import com.ludovictemgoua.imdb.domain.repository.ReviewRepository;
@@ -5086,7 +5093,7 @@ public record ReviewRequest(@Min(1) @Max(10) int rating, String body, int versio
 ```java
 package com.ludovictemgoua.imdb.application.contracts;
 
-import com.ludovictemgoua.imdb.application.ReviewRequest;
+import com.ludovictemgoua.imdb.application.rest.ReviewRequest;
 import com.ludovictemgoua.imdb.domain.model.PagedResult;
 import com.ludovictemgoua.imdb.domain.model.Review;
 
@@ -5096,7 +5103,7 @@ public interface ReviewUseCase {
 
     Review getMine(int userId, String titleId);
 
-    Review update(int userId, String titleId, ReviewRequest request);
+    Review update(int userId, String titleId, com.ludovictemgoua.imdb.application.rest.ReviewRequest request);
 
     void delete(int userId, String titleId, int expectedVersion);
 
@@ -5110,6 +5117,7 @@ public interface ReviewUseCase {
 package com.ludovictemgoua.imdb.application;
 
 import com.ludovictemgoua.imdb.application.contracts.ReviewUseCase;
+import com.ludovictemgoua.imdb.application.rest.ReviewRequest;
 import com.ludovictemgoua.imdb.domain.exception.ConflictException;
 import com.ludovictemgoua.imdb.domain.exception.NotFoundException;
 import com.ludovictemgoua.imdb.domain.model.PagedResult;
@@ -5273,12 +5281,11 @@ Expected: FAIL initially with compile errors everywhere `new TitleDetail(...)` o
 ```java
 package com.ludovictemgoua.imdb.infrastructure.cache;
 
-import com.ludovictemgoua.imdb.application.ReviewRequest;
+import com.ludovictemgoua.imdb.application.rest.ReviewRequest;
 import com.ludovictemgoua.imdb.application.ReviewUseCaseImpl;
 import com.ludovictemgoua.imdb.application.contracts.ReviewUseCase;
 import com.ludovictemgoua.imdb.domain.model.PagedResult;
 import com.ludovictemgoua.imdb.domain.model.Review;
-import com.ludovictemgoua.imdb.utils.ImdbIds;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Service;
@@ -5333,7 +5340,7 @@ public class CachingReviewUseCase implements ReviewUseCase {
 ```java
 package com.ludovictemgoua.imdb.presentation;
 
-import com.ludovictemgoua.imdb.application.ReviewRequest;
+import com.ludovictemgoua.imdb.application.rest.ReviewRequest;
 import com.ludovictemgoua.imdb.application.contracts.ReviewUseCase;
 import com.ludovictemgoua.imdb.domain.model.PagedResult;
 import com.ludovictemgoua.imdb.domain.model.Review;
@@ -5973,8 +5980,6 @@ public record AddListItemRequest(@NotBlank String titleId) {
 ```java
 package com.ludovictemgoua.imdb.application.contracts;
 
-import com.ludovictemgoua.imdb.application.CreateListRequest;
-import com.ludovictemgoua.imdb.application.UpdateListRequest;
 import com.ludovictemgoua.imdb.domain.model.CustomList;
 import com.ludovictemgoua.imdb.domain.model.CustomListView;
 import com.ludovictemgoua.imdb.domain.model.PagedResult;
@@ -5983,7 +5988,7 @@ import java.util.Optional;
 
 public interface ListUseCase {
 
-    CustomList create(int userId, CreateListRequest request);
+    CustomList create(int userId, com.ludovictemgoua.imdb.application.rest.CreateListRequest request);
 
     CustomListView getById(int listId, Optional<Integer> viewerUserId);
 
@@ -5991,7 +5996,7 @@ public interface ListUseCase {
 
     PagedResult<CustomList> getPublic(int page, int size);
 
-    void update(int listId, int userId, UpdateListRequest request);
+    void update(int listId, int userId, com.ludovictemgoua.imdb.application.rest.UpdateListRequest request);
 
     void delete(int listId, int userId, int expectedVersion);
 
@@ -6005,6 +6010,8 @@ public interface ListUseCase {
 package com.ludovictemgoua.imdb.application;
 
 import com.ludovictemgoua.imdb.application.contracts.ListUseCase;
+import com.ludovictemgoua.imdb.application.rest.CreateListRequest;
+import com.ludovictemgoua.imdb.application.rest.UpdateListRequest;
 import com.ludovictemgoua.imdb.domain.exception.ConflictException;
 import com.ludovictemgoua.imdb.domain.exception.ForbiddenException;
 import com.ludovictemgoua.imdb.domain.exception.NotFoundException;
@@ -6177,9 +6184,8 @@ Expected: FAIL - `ListController` doesn't exist yet.
 ```java
 package com.ludovictemgoua.imdb.presentation;
 
-import com.ludovictemgoua.imdb.application.AddListItemRequest;
-import com.ludovictemgoua.imdb.application.CreateListRequest;
-import com.ludovictemgoua.imdb.application.UpdateListRequest;
+import com.ludovictemgoua.imdb.application.rest.AddListItemRequest;
+import com.ludovictemgoua.imdb.application.rest.CreateListRequest;
 import com.ludovictemgoua.imdb.application.contracts.ListUseCase;
 import com.ludovictemgoua.imdb.domain.model.CustomList;
 import com.ludovictemgoua.imdb.domain.model.CustomListView;
@@ -6240,7 +6246,7 @@ public class ListController {
 
     @PutMapping("/{listId}")
     public void update(Authentication authentication, @PathVariable int listId,
-                       @Valid @RequestBody UpdateListRequest request) {
+                       @Valid @RequestBody com.ludovictemgoua.imdb.application.rest.UpdateListRequest request) {
         listUseCase.update(listId, CurrentUser.requireId(authentication), request);
     }
 
@@ -6253,7 +6259,7 @@ public class ListController {
     @PostMapping("/{listId}/items")
     @ResponseStatus(HttpStatus.CREATED)
     public void addItem(Authentication authentication, @PathVariable int listId,
-                       @Valid @RequestBody AddListItemRequest request) {
+                        @Valid @RequestBody AddListItemRequest request) {
         listUseCase.addItem(listId, CurrentUser.requireId(authentication), request.titleId());
     }
 

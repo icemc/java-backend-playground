@@ -1,5 +1,6 @@
 package com.ludovictemgoua.imdb.application;
 
+import com.ludovictemgoua.imdb.application.rest.ReviewRequest;
 import com.ludovictemgoua.imdb.domain.exception.ConflictException;
 import com.ludovictemgoua.imdb.domain.model.Review;
 import com.ludovictemgoua.imdb.domain.repository.ReviewRepository;

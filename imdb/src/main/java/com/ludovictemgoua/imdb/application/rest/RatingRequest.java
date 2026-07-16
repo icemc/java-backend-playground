@@ -1,4 +1,4 @@
-package com.ludovictemgoua.imdb.application;
+package com.ludovictemgoua.imdb.application.rest;
 
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;

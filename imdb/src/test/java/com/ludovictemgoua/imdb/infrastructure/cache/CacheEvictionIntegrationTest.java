@@ -1,9 +1,9 @@
 package com.ludovictemgoua.imdb.infrastructure.cache;
 
 import com.ludovictemgoua.imdb.TestcontainersConfiguration;
-import com.ludovictemgoua.imdb.application.PatchPersonRequest;
-import com.ludovictemgoua.imdb.application.RatingRequest;
-import com.ludovictemgoua.imdb.application.UpdateTitleRequest;
+import com.ludovictemgoua.imdb.application.rest.PatchPersonRequest;
+import com.ludovictemgoua.imdb.application.rest.RatingRequest;
+import com.ludovictemgoua.imdb.application.rest.UpdateTitleRequest;
 import com.ludovictemgoua.imdb.application.contracts.PersonAdminUseCase;
 import com.ludovictemgoua.imdb.application.contracts.SixDegreesUseCase;
 import com.ludovictemgoua.imdb.application.contracts.TitleAdminUseCase;

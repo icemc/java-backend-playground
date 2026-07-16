@@ -2,6 +2,9 @@ package com.ludovictemgoua.imdb.application;
 
 import com.ludovictemgoua.imdb.application.contracts.SixDegreesOutcome;
 import com.ludovictemgoua.imdb.application.contracts.SixDegreesUseCase;
+import com.ludovictemgoua.imdb.application.rest.PathStep;
+import com.ludovictemgoua.imdb.application.rest.PersonRef;
+import com.ludovictemgoua.imdb.application.rest.SixDegreesResult;
 import com.ludovictemgoua.imdb.domain.model.GraphPath;
 import com.ludovictemgoua.imdb.domain.model.PersonResolution;
 import com.ludovictemgoua.imdb.domain.model.SharedTitle;

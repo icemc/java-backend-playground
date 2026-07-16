@@ -1,4 +1,4 @@
-package com.ludovictemgoua.imdb.application;
+package com.ludovictemgoua.imdb.application.rest;
 
 import java.util.List;
 

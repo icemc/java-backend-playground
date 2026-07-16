@@ -1,5 +1,8 @@
 package com.ludovictemgoua.imdb.application;
 
+import com.ludovictemgoua.imdb.application.rest.CreateTitleRequest;
+import com.ludovictemgoua.imdb.application.rest.PrincipalRequest;
+import com.ludovictemgoua.imdb.application.rest.UpdateTitleRequest;
 import com.ludovictemgoua.imdb.domain.exception.ConflictException;
 import com.ludovictemgoua.imdb.domain.exception.NotFoundException;
 import com.ludovictemgoua.imdb.domain.model.TitleCore;

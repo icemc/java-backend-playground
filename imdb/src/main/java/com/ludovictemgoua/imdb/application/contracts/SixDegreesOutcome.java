@@ -1,6 +1,6 @@
 package com.ludovictemgoua.imdb.application.contracts;
 
-import com.ludovictemgoua.imdb.application.SixDegreesResult;
+import com.ludovictemgoua.imdb.application.rest.SixDegreesResult;
 import com.ludovictemgoua.imdb.domain.model.PersonCandidate;
 
 import java.util.List;

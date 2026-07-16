@@ -1,8 +1,8 @@
 package com.ludovictemgoua.imdb.application.contracts;
 
-import com.ludovictemgoua.imdb.application.CreatePersonRequest;
-import com.ludovictemgoua.imdb.application.PatchPersonRequest;
-import com.ludovictemgoua.imdb.application.UpdatePersonRequest;
+import com.ludovictemgoua.imdb.application.rest.CreatePersonRequest;
+import com.ludovictemgoua.imdb.application.rest.PatchPersonRequest;
+import com.ludovictemgoua.imdb.application.rest.UpdatePersonRequest;
 import com.ludovictemgoua.imdb.domain.model.PersonCore;
 
 public interface PersonAdminUseCase {

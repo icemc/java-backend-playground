@@ -1,7 +1,7 @@
 package com.ludovictemgoua.imdb.presentation;
 
-import com.ludovictemgoua.imdb.application.AddWatchlistItemRequest;
-import com.ludovictemgoua.imdb.application.VisibilityRequest;
+import com.ludovictemgoua.imdb.application.rest.AddWatchlistItemRequest;
+import com.ludovictemgoua.imdb.application.rest.VisibilityRequest;
 import com.ludovictemgoua.imdb.application.contracts.WatchlistUseCase;
 import com.ludovictemgoua.imdb.domain.model.WatchlistView;
 import com.ludovictemgoua.imdb.infrastructure.security.CurrentUser;

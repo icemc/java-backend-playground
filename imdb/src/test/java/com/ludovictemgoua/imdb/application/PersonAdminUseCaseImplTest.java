@@ -1,5 +1,7 @@
 package com.ludovictemgoua.imdb.application;
 
+import com.ludovictemgoua.imdb.application.rest.CreatePersonRequest;
+import com.ludovictemgoua.imdb.application.rest.UpdatePersonRequest;
 import com.ludovictemgoua.imdb.domain.exception.ConflictException;
 import com.ludovictemgoua.imdb.domain.exception.NotFoundException;
 import com.ludovictemgoua.imdb.domain.model.PersonCore;

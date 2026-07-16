@@ -1,5 +1,7 @@
 package com.ludovictemgoua.imdb.application;
 
+import com.ludovictemgoua.imdb.application.rest.LoginRequest;
+import com.ludovictemgoua.imdb.application.rest.RegisterRequest;
 import com.ludovictemgoua.imdb.domain.exception.ConflictException;
 import com.ludovictemgoua.imdb.domain.exception.ForbiddenException;
 import com.ludovictemgoua.imdb.domain.model.Role;

@@ -1,6 +1,8 @@
 package com.ludovictemgoua.imdb.application;
 
 import com.ludovictemgoua.imdb.application.contracts.ListUseCase;
+import com.ludovictemgoua.imdb.application.rest.CreateListRequest;
+import com.ludovictemgoua.imdb.application.rest.UpdateListRequest;
 import com.ludovictemgoua.imdb.domain.exception.ConflictException;
 import com.ludovictemgoua.imdb.domain.exception.ForbiddenException;
 import com.ludovictemgoua.imdb.domain.exception.NotFoundException;

@@ -1,6 +1,7 @@
 package com.ludovictemgoua.imdb.application;
 
 import com.ludovictemgoua.imdb.application.contracts.TitleAdminUseCase;
+import com.ludovictemgoua.imdb.application.rest.*;
 import com.ludovictemgoua.imdb.domain.exception.ConflictException;
 import com.ludovictemgoua.imdb.domain.exception.NotFoundException;
 import com.ludovictemgoua.imdb.domain.model.PrincipalCredit;

@@ -1,6 +1,6 @@
 package com.ludovictemgoua.imdb.presentation;
 
-import com.ludovictemgoua.imdb.application.ReviewRequest;
+import com.ludovictemgoua.imdb.application.rest.ReviewRequest;
 import com.ludovictemgoua.imdb.application.contracts.ReviewUseCase;
 import com.ludovictemgoua.imdb.domain.model.PagedResult;
 import com.ludovictemgoua.imdb.domain.model.Review;

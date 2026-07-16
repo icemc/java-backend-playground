@@ -1,8 +1,8 @@
 package com.ludovictemgoua.imdb.application.contracts;
 
-import com.ludovictemgoua.imdb.application.LoginRequest;
-import com.ludovictemgoua.imdb.application.RegisterRequest;
-import com.ludovictemgoua.imdb.application.TokenPair;
+import com.ludovictemgoua.imdb.application.rest.LoginRequest;
+import com.ludovictemgoua.imdb.application.rest.RegisterRequest;
+import com.ludovictemgoua.imdb.application.rest.TokenPair;
 
 public interface AuthUseCase {
 

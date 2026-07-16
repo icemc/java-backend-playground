@@ -1,12 +1,12 @@
 package com.ludovictemgoua.imdb.infrastructure.cache;
 
-import com.ludovictemgoua.imdb.application.CreateTitleRequest;
-import com.ludovictemgoua.imdb.application.CrewRequest;
-import com.ludovictemgoua.imdb.application.PatchTitleRequest;
-import com.ludovictemgoua.imdb.application.PrincipalRequest;
-import com.ludovictemgoua.imdb.application.RatingRequest;
+import com.ludovictemgoua.imdb.application.rest.CreateTitleRequest;
+import com.ludovictemgoua.imdb.application.rest.CrewRequest;
+import com.ludovictemgoua.imdb.application.rest.PatchTitleRequest;
+import com.ludovictemgoua.imdb.application.rest.PrincipalRequest;
+import com.ludovictemgoua.imdb.application.rest.RatingRequest;
 import com.ludovictemgoua.imdb.application.TitleAdminUseCaseImpl;
-import com.ludovictemgoua.imdb.application.UpdateTitleRequest;
+import com.ludovictemgoua.imdb.application.rest.UpdateTitleRequest;
 import com.ludovictemgoua.imdb.application.contracts.TitleAdminUseCase;
 import com.ludovictemgoua.imdb.domain.model.PrincipalCredit;
 import com.ludovictemgoua.imdb.domain.model.TitleCore;
