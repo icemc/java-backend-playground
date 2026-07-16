@@ -1,0 +1,119 @@
+spring:
+  application:
+    name: imdb
+  datasource:
+    url: jdbc:postgresql://localhost:5432/imdb
+    username: imdb
+    password: password
+    hikari:
+      # Default (10) was completely swamped by k6's 100-VU search load test - HikariPool logs showed
+      # total=10, active=10, idle=0, waiting=46, cascading into 30s connection-acquisition timeouts.
+      # 30 gave headroom for that isolated single-endpoint load, but k6/all-endpoints.js (which runs
+      # browsing/userJourney/adminWrites scenarios simultaneously, peaking around 105 combined VUs)
+      # exhausted it again - CannotGetJdbcConnectionException on nearly every repository, not just one
+      # endpoint, confirming pool-wide starvation rather than a bug in any single code path. 60 still
+      # leaves comfortable headroom under Postgres's max_connections=100 (pg_stat_activity showed only
+      # ~4 non-pool connections in use - exporter plus incidental admin sessions).
+      maximum-pool-size: 60
+  data:
+    redis:
+      host: localhost
+      port: 6379
+  flyway:
+    enabled: true
+    # abanda/imdb-postgresql keeps bouncing its own listener throughout the (up to 30 minute)
+    # background data import, well after the container's healthcheck first reports healthy -
+    # discovered empirically while bringing this stack up. Flyway's own retry loop rides out those
+    # gaps directly instead of the whole application failing to start on an unlucky first attempt.
+    connect-retries: 180
+    connect-retries-interval: 10s
+    # abanda/imdb-postgresql's own init.sh populates the `public` schema (name_basics, title_basics,
+    # etc.) via raw psql/imdblib, entirely outside Flyway - so on a freshly imported database Flyway
+    # sees a non-empty schema with no history table and refuses to proceed. baseline-version: 0 tells
+    # it to treat V0 (the CREATE TABLE IF NOT EXISTS base schema, already satisfied by imdblib's
+    # tables) as the starting point, and only apply V1/V2 on top. Has no effect on the empty schema
+    # Testcontainers spins up for integration tests - Flyway just runs V0-V2 there as normal.
+    baseline-on-migrate: true
+    baseline-version: 0
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, prometheus
+  tracing:
+    sampling:
+      probability: 1.0
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          endpoint: http://localhost:4318/v1/traces
+  # Adding the "OpenTelemetry" Initializr module also auto-configures a push-based OTLP metrics
+  # exporter (defaulting to localhost:4318/v1/metrics, which inside a container doesn't resolve to
+  # anything useful) - discovered from a live ConnectException in the logs. Metrics were always meant
+  # to go via Prometheus pull-scrape only (LLD dependency table, `/actuator/prometheus`), not push, so
+  # this second unwanted exporter is disabled outright rather than pointed anywhere. Note the
+  # inconsistent Boot 4.1 property namespace: metrics kept "management.otlp.*" while tracing moved to
+  # "management.opentelemetry.tracing.*" above - confirmed against OtlpMetricsProperties directly, not
+  # guessed, since the two don't mirror each other.
+  otlp:
+    metrics:
+      export:
+        enabled: false
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+
+six-degrees:
+  side-cap: 4
+  absolute-max-degree: 7
+  # fan-out-cap removed: the V3 find_shortest_co_star_path function does a real BFS with a genuine
+  # visited set, so it never needs to arbitrarily drop neighbors to bound the search - it expands
+  # every unvisited neighbor of the current frontier, which is what fixed a real bug (the old
+  # capped-and-ordered fan-out could silently miss the true shortest path).
+  # Tried raising this to 5 after fixing the missing title_principals.nconst index (V4) - did not
+  # help: the ~25-30% failure rate under k6 load stayed essentially the same, it just made each
+  # failing request wait 5s instead of 2s before erroring. That rules out "just needs a bit more
+  # time" - there's a persistent population of genuinely hard pairs (likely: search reaches a large
+  # hub partway through expansion with no intersection yet, and processing that hub's full neighbor
+  # set for one level is itself expensive) that needs its own investigation, tracked as a follow-up
+  # rather than solved by this knob. Reverted to 2 - failing fast is better than failing slow when
+  # the timeout isn't fixing the underlying issue either way.
+  query-timeout-seconds: 2
+
+top-rated:
+  default-min-votes: 1000
+
+imdb:
+  jwt:
+    # No default - must be set via the JWT_SECRET env var (>= 32 bytes for HS256). Deliberately
+    # absent here rather than defaulted to something committed, since this signs every access/
+    # refresh token. Maven Surefire/Failsafe set a fixed test-only value for all test runs (pom.xml).
+    secret: ${JWT_SECRET}
+  bootstrap-admin:
+    # No defaults for either - a fresh stack with neither set simply never gets an admin account,
+    # which is the safe failure mode (an operator has to deliberately opt in), rather than shipping
+    # a guessable default admin password.
+    email: ${IMDB_BOOTSTRAP_ADMIN_EMAIL:}
+    password: ${IMDB_BOOTSTRAP_ADMIN_PASSWORD:}
+
+logging:
+  structured:
+    format:
+      # Boot 4.1's native structured logging (org.springframework.boot.logging.structured, verified
+      # directly in the spring-boot-4.1.0 jar) - no logstash-logback-encoder or other dependency
+      # needed. "logstash" is a plain, schema-agnostic flat JSON shape (timestamp/level/logger/
+      # message + all MDC entries) - the right choice for Loki, which doesn't care about a specific
+      # schema, unlike ECS (Elastic-specific) or GELF (Graylog-specific). MDC entries - traceId/
+      # spanId (already populated by Micrometer Tracing) and requestId (RequestLoggingFilter,
+      # presentation layer) - are included in every line automatically, no per-log-statement wiring.
+      console: logstash
+  level:
+    root: INFO
+    # Overridable per-environment via the standard Spring Boot env var
+    # (LOGGING_LEVEL_COM_LUDOVICTEMGOUA_IMDB=DEBUG) with no code change - e.g. to get per-query
+    # detail from infrastructure.persistence/cache while debugging locally, without turning up noise
+    # from the framework itself (Spring/Hikari/Tomcat stay at root's INFO).
+    com.ludovictemgoua.imdb: INFO

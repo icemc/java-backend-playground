@@ -1,0 +1,10 @@
+apiVersion: 1
+
+providers:
+  - name: imdb
+    orgId: 1
+    folder: IMDb
+    type: file
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/provisioning/dashboards/json

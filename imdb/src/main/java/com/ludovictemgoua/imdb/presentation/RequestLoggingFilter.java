@@ -1,0 +1,90 @@
+package com.ludovictemgoua.imdb.presentation;
+
+import com.ludovictemgoua.imdb.utils.HeaderSanitizer;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
+import org.springframework.stereotype.Component;
+import org.springframework.web.filter.OncePerRequestFilter;
+
+import java.io.IOException;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.UUID;
+
+// Ordered.HIGHEST_PRECEDENCE + 2, not HIGHEST_PRECEDENCE itself: Spring's own
+// ServerHttpObservationFilter (WebMvcObservationAutoConfiguration) registers at exactly
+// HIGHEST_PRECEDENCE + 1 (confirmed by decompiling spring-boot-webmvc-4.1.0.jar, not assumed) - that
+// filter is what opens the span whose scope triggers trace/span-id MDC population
+// (micrometer-tracing-bridge-otel's Slf4JEventListener, also auto-registered). Running at
+// HIGHEST_PRECEDENCE itself would wrap *around* that filter instead of nesting inside it, so
+// "request started"/"request completed" below would log before the span exists and after it's
+// already closed - exactly the bug this order was chosen to avoid (confirmed empirically: those two
+// log lines were the only ones in a request's entire lifecycle missing traceId/spanId, despite the
+// MDC population mechanism itself working correctly for everything logged in between). A plain
+// @Component is enough for Spring Boot to auto-register any jakarta.servlet.Filter bean; no separate
+// FilterRegistrationBean needed.
+@Component
+@Order(Ordered.HIGHEST_PRECEDENCE + 2)
+public class RequestLoggingFilter extends OncePerRequestFilter {
+
+    private static final Logger log = LoggerFactory.getLogger(RequestLoggingFilter.class);
+    private static final String REQUEST_ID_HEADER = "X-Request-Id";
+    private static final String MDC_KEY = "requestId";
+
+    // Prometheus scrapes /actuator/prometheus every ~15s and Docker/orchestrator health checks poll
+    // /actuator/health continuously - neither is real application traffic, and logging them at INFO
+    // would drown out the requests that actually matter. shouldNotFilter skips the whole filter (no
+    // requestId, no log lines) for these rather than just suppressing the log statements, so actuator
+    // traffic doesn't pay even the MDC/timing overhead.
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        return request.getRequestURI().startsWith("/actuator");
+    }
+
+    @Override
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
+            FilterChain filterChain) throws ServletException, IOException {
+        String requestId = resolveRequestId(request);
+        MDC.put(MDC_KEY, requestId);
+        response.setHeader(REQUEST_ID_HEADER, requestId);
+
+        long startMillis = System.currentTimeMillis();
+        log.info("request started: method={} path={} headers={}",
+                request.getMethod(), request.getRequestURI(), HeaderSanitizer.sanitize(headersOf(request)));
+        try {
+            filterChain.doFilter(request, response);
+        } finally {
+            log.info("request completed: method={} path={} status={} durationMs={}",
+                    request.getMethod(), request.getRequestURI(), response.getStatus(),
+                    System.currentTimeMillis() - startMillis);
+            // Threads are pooled and reused across requests - leaving this set would leak the
+            // previous request's id into the next request handled by the same thread.
+            MDC.remove(MDC_KEY);
+        }
+    }
+
+    // Honors an id the caller already generated (e.g. an upstream gateway) so a single request's
+    // logs stay correlated end-to-end across services, rather than getting a new id at each hop.
+    private static String resolveRequestId(HttpServletRequest request) {
+        String incoming = request.getHeader(REQUEST_ID_HEADER);
+        return (incoming == null || incoming.isBlank()) ? UUID.randomUUID().toString() : incoming;
+    }
+
+    private static Map<String, String> headersOf(HttpServletRequest request) {
+        Map<String, String> headers = new LinkedHashMap<>();
+        var names = request.getHeaderNames();
+        if (names == null) {
+            return headers;
+        }
+        Collections.list(names).forEach(name -> headers.put(name, request.getHeader(name)));
+        return headers;
+    }
+}

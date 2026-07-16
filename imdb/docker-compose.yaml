@@ -1,0 +1,239 @@
+networks:
+  imdb-net:
+    name: imdb-net
+
+volumes:
+  imdb_data:
+  redis_data:
+  prometheus_data:
+  loki_data:
+  tempo_data:
+  grafana_data:
+  alloy_data:
+
+services:
+  # ---------------------------------------------------------------------
+  # Data stores
+  # ---------------------------------------------------------------------
+
+  postgres:
+    image: abanda/imdb-postgresql:latest
+    container_name: imdb-postgres
+    # Docker's default 64MB /dev/shm is too small once Postgres runs parallel workers or shared
+    # hash/sort operations under real concurrent load - discovered via a k6 run failing 100% of
+    # requests with "could not resize shared memory segment ... No space left on device".
+    shm_size: 256m
+    ports:
+      - "5432:5432"
+    volumes:
+      - imdb_data:/var/lib/postgresql/data
+    environment:
+      # MINIMAL_DATASET is honored by upstream image tooling for a faster,
+      # smaller import while iterating locally; unset/false loads the full dataset.
+      MINIMAL_DATASET: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U imdb -d imdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40m # first-run TSV import can take 20-30 minutes
+    networks:
+      - imdb-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: imdb-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - imdb-net
+
+  # ---------------------------------------------------------------------
+  # Application (built once the Spring Boot project is scaffolded)
+  # ---------------------------------------------------------------------
+
+  imdb-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: imdb-service
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/imdb
+      SPRING_DATASOURCE_USERNAME: imdb
+      SPRING_DATASOURCE_PASSWORD: password
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: "6379"
+      MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT: http://tempo:4318/v1/traces
+      MANAGEMENT_TRACING_SAMPLING_PROBABILITY: "1.0"
+      BACON_PERSON_NAME: "Kevin Bacon"
+      SIX_DEGREES_MAX_DEPTH: "7"
+      JWT_SECRET: "local-dev-only-secret-change-in-real-deployments-32bytes+"
+      IMDB_BOOTSTRAP_ADMIN_EMAIL: "admin@imdb.local"
+      IMDB_BOOTSTRAP_ADMIN_PASSWORD: "change-me-please"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Discovered empirically: abanda/imdb-postgresql keeps bouncing its own listener while the
+    # background import is running (config tuning at startup, and apparent connection blips under
+    # the heavy COPY load), even after the healthcheck has reported healthy once. depends_on only
+    # gates the very first startup attempt, not ongoing availability, so a restart policy - not a
+    # smarter healthcheck - is what actually makes the app recover on its own instead of staying
+    # crashed after one bad-timing connection attempt.
+    restart: on-failure:5
+    networks:
+      - imdb-net
+
+  # ---------------------------------------------------------------------
+  # Metrics
+  # ---------------------------------------------------------------------
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: imdb-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # NOT --enable-feature=remote-write-receiver - that's not a real --enable-feature value on this
+      # Prometheus version (3.11.3 as pulled here); confirmed via a live "Unknown option for
+      # --enable-feature" warning in the container's own logs, and the write endpoint 404ing until
+      # this was corrected. Remote write receiving has its own dedicated flag instead.
+      - --web.enable-remote-write-receiver # accepts k6's experimental-prometheus-rw output
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - imdb-net
+
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:latest
+    container_name: imdb-postgres-exporter
+    environment:
+      DATA_SOURCE_NAME: "postgresql://imdb:password@postgres:5432/imdb?sslmode=disable"
+    ports:
+      - "9187:9187"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - imdb-net
+
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: imdb-redis-exporter
+    environment:
+      REDIS_ADDR: "redis://redis:6379"
+    ports:
+      - "9121:9121"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - imdb-net
+
+  # ---------------------------------------------------------------------
+  # Logs
+  # ---------------------------------------------------------------------
+
+  loki:
+    image: grafana/loki:latest
+    container_name: imdb-loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki_data:/loki
+    networks:
+      - imdb-net
+
+  grafana-alloy:
+    image: grafana/alloy:latest
+    container_name: imdb-alloy
+    command: run --server.http.listen-addr=0.0.0.0:12345 --storage.path=/var/lib/alloy/data /etc/alloy/config.alloy
+    volumes:
+      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - alloy_data:/var/lib/alloy/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "12345:12345"
+    depends_on:
+      - loki
+    networks:
+      - imdb-net
+
+  # ---------------------------------------------------------------------
+  # Traces
+  # ---------------------------------------------------------------------
+
+  tempo:
+    image: grafana/tempo:2.10.7
+    container_name: imdb-tempo
+    command: -config.file=/etc/tempo.yaml
+    volumes:
+      - ./observability/tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo_data:/var/tempo
+    ports:
+      - "3200:3200" # Tempo query API
+      - "4317:4317" # OTLP gRPC receiver
+      - "4318:4318" # OTLP HTTP receiver
+    networks:
+      - imdb-net
+
+  # ---------------------------------------------------------------------
+  # Dashboards
+  # ---------------------------------------------------------------------
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: imdb-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+    networks:
+      - imdb-net
+
+  # ---------------------------------------------------------------------
+  # Load testing (opt-in: `docker compose --profile load-test run k6 run /scripts/<name>.js`)
+  # ---------------------------------------------------------------------
+
+  k6:
+    image: grafana/k6:latest
+    container_name: imdb-k6
+    profiles: ["load-test"]
+    environment:
+      K6_PROMETHEUS_RW_SERVER_URL: http://prometheus:9090/api/v1/write
+      # K6_PROMETHEUS_RW_SERVER_URL alone does not activate the output - confirmed empirically (a run
+      # without this completed with no errors and pushed nothing at all). K6_OUT is the env-var form
+      # of `k6 run --out experimental-prometheus-rw`, so the documented `docker compose --profile
+      # load-test run k6 run /scripts/<name>.js` (LLD §8) works without needing that flag typed by hand.
+      K6_OUT: experimental-prometheus-rw
+      # Default trend-stat export is p99 only - the k6 dashboard's "p95 request duration" panel
+      # (LLD §7/§8) needs p95 specifically; confirmed empirically that only k6_..._p99 series existed
+      # under the default. Each Trend metric (http_req_duration, http_req_waiting, etc.) gets both
+      # suffixes once this is set.
+      K6_PROMETHEUS_RW_TREND_STATS: "p(95),p(99)"
+    volumes:
+      - ./k6:/scripts:ro
+    networks:
+      - imdb-net

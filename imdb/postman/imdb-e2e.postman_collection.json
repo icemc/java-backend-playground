@@ -1,0 +1,426 @@
+{
+  "info": {
+    "name": "imdb e2e",
+    "_postman_id": "b6a1e6f0-6b3e-4b6a-9f0a-imdb-e2e-collection",
+    "description": "Contract/e2e tests against a really-running imdb-service (docker-compose.e2e.yaml), asserting on the same known fixture dataset the Testcontainers integration tests use (src/test/resources/fixtures/fixture-data.sql) - one dataset kept in sync, not two. Run with Newman: newman run imdb-e2e.postman_collection.json --env-var baseUrl=http://localhost:8080",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080" },
+    { "key": "accessToken", "value": "" },
+    { "key": "refreshToken", "value": "" },
+    { "key": "adminAccessToken", "value": "" },
+    { "key": "createdTitleId", "value": "" },
+    { "key": "createdListId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Health check is UP",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/actuator/health"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('status is 200', () => pm.response.to.have.status(200));",
+              "pm.test('status is UP', () => pm.expect(pm.response.json().status).to.eql('UP'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Search finds a title by fuzzy title match",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/v1/titles/search?title=Few Good Men&page=0&size=20"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('status is 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('finds the fixture title', () => {",
+              "  pm.expect(body.content.map(t => t.id)).to.include('tt0000100');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Title detail returns cast, crew and rating",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/v1/titles/tt0000100"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('status is 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('primary title matches fixture', () => pm.expect(body.primaryTitle).to.eql('A Few Good Men'));",
+              "pm.test('directors include Rob Reiner', () => {",
+              "  pm.expect(body.directors.map(d => d.name)).to.include('Rob Reiner');",
+              "});",
+              "pm.test('writers include Aaron Sorkin', () => {",
+              "  pm.expect(body.writers.map(w => w.name)).to.include('Aaron Sorkin');",
+              "});",
+              "pm.test('cast includes both principals', () => {",
+              "  const names = body.cast.map(c => c.name);",
+              "  pm.expect(names).to.include('Kevin Bacon');",
+              "  pm.expect(names).to.include('Tom Cruise');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Title detail 404s for an unknown id",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/v1/titles/tt9999999"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('status is 404', () => pm.response.to.have.status(404));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Top rated ranks by weighted rating, not raw average",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/v1/genres/Action/top-rated?limit=10&minVotes=100"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('status is 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('200 outranks 201 once vote-count shrinkage is applied', () => {",
+              "  pm.expect(body[0].id).to.eql('tt0000200');",
+              "  pm.expect(body[1].id).to.eql('tt0000201');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Six degrees finds a direct co-star (degree 1)",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/v1/people/six-degrees?personA=nm0000001&personB=nm0000002"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('status is 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('degree is 1', () => pm.expect(body.degree).to.eql(1));",
+              "pm.test('within requested max', () => pm.expect(body.withinRequestedMax).to.eql(true));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Six degrees finds a multi-hop path (degree 5)",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/v1/people/six-degrees?personA=nm0000001&personB=nm0000006"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('status is 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('degree is 5 - the full co-star chain', () => pm.expect(body.degree).to.eql(5));",
+              "pm.test('path has 6 people', () => pm.expect(body.path).to.have.lengthOf(6));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Six degrees reports no path for the isolated actor",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/v1/people/six-degrees?personA=nm0000001&personB=nm0000007"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('status is 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('no path found', () => {",
+              "  pm.expect(body.degree).to.be.null;",
+              "  pm.expect(body.withinRequestedMax).to.eql(false);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Six degrees requires disambiguation for an ambiguous name",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/v1/people/six-degrees?personA=Jamie Lee&personB=nm0000001"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('status is 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('requires disambiguation between the two fixture Jamie Lees', () => {",
+              "  pm.expect(body.requiresDisambiguation).to.eql(true);",
+              "  pm.expect(body.candidates).to.have.lengthOf(2);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Register a new user",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/v1/auth/register",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"email\":\"e2e-user@example.com\",\"password\":\"password123\",\"displayName\":\"E2E User\"}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('status is 201', () => pm.response.to.have.status(201));",
+              "const body = pm.response.json();",
+              "pm.collectionVariables.set('accessToken', body.accessToken);",
+              "pm.collectionVariables.set('refreshToken', body.refreshToken);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin logs in",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/v1/auth/login",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"email\":\"admin@imdb.local\",\"password\":\"e2e-test-admin-password\"}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('status is 200', () => pm.response.to.have.status(200));",
+              "pm.collectionVariables.set('adminAccessToken', pm.response.json().accessToken);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Refresh the access token",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/v1/auth/refresh",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\"refreshToken\":\"{{refreshToken}}\"}" }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": ["pm.test('status is 200', () => pm.response.to.have.status(200));"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Non-admin cannot create a title",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/v1/titles",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"primaryTitle\":\"Nope\",\"originalTitle\":\"Nope\",\"titleType\":\"movie\",\"genres\":[]}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": ["pm.test('status is 403', () => pm.response.to.have.status(403));"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin creates a title",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/v1/titles",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"primaryTitle\":\"E2E Test Movie\",\"originalTitle\":\"E2E Test Movie\",\"titleType\":\"movie\",\"startYear\":2024,\"genres\":[\"Drama\"]}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('status is 201', () => pm.response.to.have.status(201));",
+              "pm.collectionVariables.set('createdTitleId', pm.response.json().id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Stale-version update returns 409",
+      "request": {
+        "method": "PUT",
+        "url": "{{baseUrl}}/api/v1/titles/{{createdTitleId}}",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"primaryTitle\":\"Renamed\",\"originalTitle\":\"Renamed\",\"titleType\":\"movie\",\"startYear\":2024,\"genres\":[],\"version\":99}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": ["pm.test('status is 409', () => pm.response.to.have.status(409));"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Add the new title to the watchlist",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/v1/watchlist/items",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+        ],
+        "body": { "mode": "raw", "raw": "{\"titleId\":\"{{createdTitleId}}\"}" }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": ["pm.test('status is 201', () => pm.response.to.have.status(201));"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Review the new title",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/v1/titles/{{createdTitleId}}/reviews",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+        ],
+        "body": { "mode": "raw", "raw": "{\"rating\":9,\"body\":\"E2E-tested and great\",\"version\":0}" }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": ["pm.test('status is 201', () => pm.response.to.have.status(201));"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create a private list",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/v1/lists",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+        ],
+        "body": { "mode": "raw", "raw": "{\"name\":\"E2E Private List\",\"visibility\":\"PRIVATE\"}" }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('status is 201', () => pm.response.to.have.status(201));",
+              "pm.collectionVariables.set('createdListId', pm.response.json().id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "A stranger cannot view the private list",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/v1/lists/{{createdListId}}",
+        "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }]
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": ["pm.test('status is 404', () => pm.response.to.have.status(404));"]
+          }
+        }
+      ]
+    }
+  ]
+}

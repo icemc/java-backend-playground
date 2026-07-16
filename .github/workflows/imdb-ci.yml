@@ -1,0 +1,107 @@
+name: imdb CI
+
+on:
+  push:
+    paths:
+      - 'imdb/**'
+      - '.github/workflows/imdb-ci.yml'
+  pull_request:
+    paths:
+      - 'imdb/**'
+      - '.github/workflows/imdb-ci.yml'
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Run unit tests
+        working-directory: imdb
+        run: mvn -B test
+
+  # Testcontainers-based (real Postgres/Redis/Grafana LGTM stack) - kept out of the unit stage
+  # deliberately, since they need Docker and take real time, not because they're less important.
+  integration:
+    needs: unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Run integration tests
+        working-directory: imdb
+        run: mvn -B failsafe:integration-test failsafe:verify
+
+  # Contract/e2e: a really-running imdb-service against a lightweight, deterministic seed (plain
+  # postgres:17 + our own Flyway migrations + the same fixture-data.sql the integration tests use),
+  # not the real abanda/imdb-postgresql image - that one's ~20-30 minute dataset import is fine for
+  # local dev but not something every push should pay for.
+  e2e:
+    needs: integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Explicit -p/project name here matches docker-compose.e2e.yaml's own `name: imdb-e2e` - keeps
+      # this stage's containers/network fully isolated from anything else that might be running on
+      # the same runner under the default directory-derived project name.
+      - name: Bring up the e2e stack
+        working-directory: imdb
+        run: docker compose -f docker-compose.e2e.yaml -p imdb-e2e up -d --build
+
+      - name: Wait for imdb-service to be healthy
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8080/actuator/health >/dev/null 2>&1; then
+              echo "imdb-service is up"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "imdb-service never became healthy" >&2
+          exit 1
+
+      - name: Wait for the seed job to finish loading fixture data
+        run: |
+          for i in $(seq 1 20); do
+            status=$(docker inspect --format='{{.State.Status}}' imdb-e2e-seed-1 2>/dev/null || echo "missing")
+            if [ "$status" = "exited" ]; then
+              code=$(docker inspect --format='{{.State.ExitCode}}' imdb-e2e-seed-1)
+              if [ "$code" != "0" ]; then
+                echo "seed job failed with exit code $code" >&2
+                docker logs imdb-e2e-seed-1 >&2
+                exit 1
+              fi
+              echo "seed job completed"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "seed job never finished" >&2
+          exit 1
+
+      - name: Run Postman/Newman e2e tests
+        working-directory: imdb
+        run: npx --yes newman run postman/imdb-e2e.postman_collection.json --env-var baseUrl=http://localhost:8080
+
+      - name: Show logs on failure
+        if: failure()
+        working-directory: imdb
+        run: docker compose -f docker-compose.e2e.yaml -p imdb-e2e logs
+
+      - name: Tear down
+        if: always()
+        working-directory: imdb
+        run: docker compose -f docker-compose.e2e.yaml -p imdb-e2e down -v
